@@ -108,12 +108,21 @@ private[finagle] class HttpServerDispatcher(
         } else {
           rep.headers.remove(Fields.Connection)
         }
-      case Version.Http11 =>
-        if (keepAlive) {
-          rep.headers.remove(Fields.Connection)
+      case Version.Http11 => {
+        val upgrade = rep.headerMap.get(Fields.Upgrade).getOrElse("none")
+        if (!(upgrade.toLowerCase == "websocket")) {
+          if (keepAlive) {
+            rep.headers.remove(Fields.Connection)
+          } else {
+            rep.headers.set(Fields.Connection, "close")
+          }
+          rep.headerMap.set("Connection-removed", "true")
         } else {
-          rep.headers.set(Fields.Connection, "close")
+          rep.headerMap.set("Connection-added", "true")
+          rep.headerMap.set(Fields.Connection, "Upgrade")
+          System.err.println("HttpServerDispatcher: NOT removing Connection header, upgrade requested")
         }
+      }
     }
   }
 }
