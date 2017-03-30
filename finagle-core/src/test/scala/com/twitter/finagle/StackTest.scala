@@ -3,7 +3,6 @@ package com.twitter.finagle
 import org.junit.runner.RunWith
 import org.scalatest.FunSuite
 import org.scalatest.junit.JUnitRunner
-import scala.collection.mutable
 
 @RunWith(classOf[JUnitRunner])
 class StackTest extends FunSuite {
@@ -30,19 +29,7 @@ class StackTest extends FunSuite {
   test("Stack.make") {
     assert(newStack().make(empty) == Seq(20, 10, 1, 2, 3, 4))
   }
-
-  test("Stack.transform") {
-    val stack = newStack() transform {
-      case Stack.Node(head, mk, next) =>
-        if (head.role == testRole3) Stack.Node(testHead4, (l: List[Int]) => 30::l, next)
-        else if (head.role == testRole2) next
-        else Stack.Node(head, mk, next)
-      case other => other
-    }
-
-    assert(stack.make(empty) == Seq(30, 1, 2, 3, 4))
-  }
-
+  
   test("Stack.insertBefore") {
     val stack = newStack()
     val module = new Stack.Module0[List[Int]] {

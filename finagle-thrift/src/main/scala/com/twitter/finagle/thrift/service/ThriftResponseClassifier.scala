@@ -3,14 +3,15 @@ package com.twitter.finagle.thrift.service
 import com.twitter.finagle.context.Contexts
 import com.twitter.finagle.service._
 import com.twitter.finagle.thrift.DeserializeCtx
-import com.twitter.util.{NonFatal, Return, Try, Throw}
+import com.twitter.util.{Return, Try, Throw}
+import scala.util.control.NonFatal
 
 /**
- * [[ResponseClassifier ResponseClassifiers]] for use with `finagle-thrift`
+ * `ResponseClassifiers` for use with `finagle-thrift`
  * request/responses.
  *
  * Thrift (and ThriftMux) services are a bit unusual in that
- * there is only a single [[com.twitter.finagle.Service]] from `Array[Byte]`
+ * there is only a single `Service` from `Array[Byte]`
  * to `Array[Byte]` for all the methods of an IDL's service.
  *
  * Thrift classifiers should be written in terms
@@ -51,7 +52,7 @@ object ThriftResponseClassifier {
 
   /**
    * Categorizes responses where the '''deserialized''' response is a
-   * Thrift Exception as a [[ResponseClass.NonRetryableFailure]].
+   * Thrift Exception as a `ResponseClass.NonRetryableFailure`.
    */
   val ThriftExceptionsAsFailures: ResponseClassifier =
     ResponseClassifier.named("ThriftExceptionsAsFailures") {

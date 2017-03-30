@@ -1,7 +1,6 @@
 package com.twitter.finagle.util
 
 import com.twitter.conversions.time._
-import com.twitter.util.Duration
 import org.junit.runner.RunWith
 import org.scalatest.FunSuite
 import org.scalatest.junit.JUnitRunner
@@ -77,6 +76,23 @@ class parsersTest extends FunSuite {
     "9223372036854775807" match {
       case long(l) => assert(l == Long.MaxValue)
       case _ => fail()
+    }
+  }
+
+  test("longHex") {
+    "abc" match {
+      case longHex(result) => assert(result == 2748L && result == 0xabc)
+      case _ => fail()
+    }
+
+    "0x123" match {
+      case longHex(result) => assert(result == 291L && result == 0x123)
+      case _ => fail()
+    }
+
+    "invalid" match {
+      case longHex(_) => fail()
+      case _ =>
     }
   }
 

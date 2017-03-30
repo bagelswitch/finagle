@@ -2,9 +2,10 @@ package com.twitter.finagle.mux.transport
 
 import com.twitter.finagle.tracing.{SpanId, TraceId, Flags}
 import com.twitter.finagle.util.{BufReader, BufWriter}
-import com.twitter.finagle.{Dtab, Dentry, NameTree, Path}
-import com.twitter.io.{Buf, Charsets}
+import com.twitter.finagle.{Dentry, Dtab, Failure, NameTree, Path}
+import com.twitter.io.Buf
 import com.twitter.util.{Duration, Time}
+import java.nio.charset.{StandardCharsets => Charsets}
 import scala.collection.mutable.ArrayBuffer
 
 /**
@@ -76,6 +77,12 @@ private[twitter] object Message {
     def extractTag(header: Int): Int = header & 0x00ffffff
     def isFragment(tag: Int): Boolean = (tag >> 23 & 1) == 1
     def setMsb(tag: Int): Int = tag | TagMSB
+  }
+
+  private object ReplyStatus {
+    val Ok: Byte = 0
+    val Error: Byte = 1
+    val Nack: Byte = 2
   }
 
   private def mkByte(b: Byte) = Buf.ByteArray.Owned(Array(b))
@@ -202,9 +209,9 @@ private[twitter] object Message {
     lazy val buf: Buf = bufOfChar(rreqType).concat(body)
   }
 
-  case class RreqOk(tag: Int, reply: Buf) extends Rreq(0, reply)
-  case class RreqError(tag: Int, error: String) extends Rreq(1, encodeString(error))
-  case class RreqNack(tag: Int) extends Rreq(2, Buf.Empty)
+  case class RreqOk(tag: Int, reply: Buf) extends Rreq(ReplyStatus.Ok, reply)
+  case class RreqError(tag: Int, error: String) extends Rreq(ReplyStatus.Error, encodeString(error))
+  case class RreqNack(tag: Int) extends Rreq(ReplyStatus.Nack, Buf.Empty)
 
   private[this] val noBytes = Array.empty[Byte]
 
@@ -228,7 +235,7 @@ private[twitter] object Message {
         }
       }
 
-      val dstbytes = if (dst.isEmpty) noBytes else dst.show.getBytes(Charsets.Utf8)
+      val dstbytes = if (dst.isEmpty) noBytes else dst.show.getBytes(Charsets.UTF_8)
       n += 2 + dstbytes.length
       n += 2
 
@@ -237,8 +244,8 @@ private[twitter] object Message {
       var i = 0
       while (i < dtab.length) {
         val dentry = dtab(i)
-        val srcbytes = dentry.prefix.show.getBytes(Charsets.Utf8)
-        val treebytes = dentry.dst.show.getBytes(Charsets.Utf8)
+        val srcbytes = dentry.prefix.show.getBytes(Charsets.UTF_8)
+        val treebytes = dentry.dst.show.getBytes(Charsets.UTF_8)
 
         n += srcbytes.length + 2 + treebytes.length + 2
 
@@ -318,18 +325,18 @@ private[twitter] object Message {
       tag: Int,
       contexts: Seq[(Buf, Buf)],
       reply: Buf)
-    extends Rdispatch(0, contexts, reply)
+    extends Rdispatch(ReplyStatus.Ok, contexts, reply)
 
   case class RdispatchError(
       tag: Int,
       contexts: Seq[(Buf, Buf)],
       error: String)
-    extends Rdispatch(1, contexts, encodeString(error))
+    extends Rdispatch(ReplyStatus.Error, contexts, encodeString(error))
 
   case class RdispatchNack(
       tag: Int,
       contexts: Seq[(Buf, Buf)])
-    extends Rdispatch(2, contexts, Buf.Empty)
+    extends Rdispatch(ReplyStatus.Nack, contexts, Buf.Empty)
 
   /**
    * A fragment, as defined by the mux spec, is a message with its tag MSB
@@ -440,26 +447,26 @@ private[twitter] object Message {
 
   def decodeUtf8(buf: Buf): String = buf match {
     case Buf.Utf8(str) => str
-    case _ => throw BadMessageException(s"expected Utf8 string, but got $buf")
+    case _ => throwBadMessageException(s"expected Utf8 string, but got $buf")
   }
 
   def encodeString(str: String): Buf = Buf.Utf8(str)
 
   private def decodeTreq(tag: Int, buf: Buf) = {
     if (buf.length < 1)
-      throw BadMessageException("short Treq")
+      throwBadMessageException("short Treq")
 
     val br = BufReader(buf)
     var nkeys = br.readByte().toInt
     if (nkeys < 0)
-      throw BadMessageException("Treq: too many keys")
+      throwBadMessageException("Treq: too many keys")
 
     var trace3: Option[(SpanId, SpanId, SpanId)] = None
     var traceFlags = 0L
 
     while (nkeys > 0) {
       if (br.remaining < 2)
-        throw BadMessageException("short Treq (header)")
+        throwBadMessageException("short Treq (header)")
 
       val key = br.readByte()
       val vsize = br.readByte().toInt match {
@@ -468,14 +475,14 @@ private[twitter] object Message {
       }
 
       if (br.remaining < vsize)
-        throw BadMessageException("short Treq (vsize)")
+        throwBadMessageException("short Treq (vsize)")
 
       // TODO: technically we should probably check for duplicate
       // keys, but for now, just pick the latest one.
       key match {
         case Treq.Keys.TraceId =>
           if (vsize != 24)
-            throw BadMessageException(s"bad traceid size $vsize")
+            throwBadMessageException(s"bad traceid size $vsize")
           trace3 = Some((
             SpanId(br.readLongBE()),  // spanId
             SpanId(br.readLongBE()),  // parentId
@@ -554,30 +561,30 @@ private[twitter] object Message {
     val contexts = decodeContexts(br)
     val rest = br.readAll()
     status match {
-      case 0 => RdispatchOk(tag, contexts, rest)
-      case 1 => RdispatchError(tag, contexts, decodeUtf8(rest))
-      case 2 => RdispatchNack(tag, contexts)
-      case _ => throw BadMessageException("invalid Rdispatch status")
+      case ReplyStatus.Ok => RdispatchOk(tag, contexts, rest)
+      case ReplyStatus.Error => RdispatchError(tag, contexts, decodeUtf8(rest))
+      case ReplyStatus.Nack => RdispatchNack(tag, contexts)
+      case _ => throwBadMessageException("invalid Rdispatch status")
     }
   }
 
   private def decodeRreq(tag: Int, buf: Buf) = {
     if (buf.length < 1)
-      throw BadMessageException("short Rreq")
+      throwBadMessageException("short Rreq")
     val br = BufReader(buf)
     val status = br.readByte()
     val rest = br.readAll()
     status match {
-      case 0 => RreqOk(tag, rest)
-      case 1 => RreqError(tag, decodeUtf8(rest))
-      case 2 => RreqNack(tag)
-      case _ => throw BadMessageException("invalid Rreq status")
+      case ReplyStatus.Ok => RreqOk(tag, rest)
+      case ReplyStatus.Error => RreqError(tag, decodeUtf8(rest))
+      case ReplyStatus.Nack => RreqNack(tag)
+      case _ => throwBadMessageException("invalid Rreq status")
     }
   }
 
   private def decodeTdiscarded(buf: Buf) = {
     if (buf.length < 3)
-      throw BadMessageException("short Tdiscarded message")
+      throwBadMessageException("short Tdiscarded message")
     val br = BufReader(buf)
     val which = ((br.readByte() & 0xff) << 16) |
       ((br.readByte() & 0xff) << 8) |
@@ -587,7 +594,7 @@ private[twitter] object Message {
 
   private def decodeTlease(buf: Buf) = {
     if (buf.length < 9)
-      throw BadMessageException("short Tlease message")
+      throwBadMessageException("short Tlease message")
     val br = BufReader(buf)
     val unit: Byte = br.readByte()
     val howMuch: Long = br.readLongBE()
@@ -596,7 +603,7 @@ private[twitter] object Message {
 
   def decode(buf: Buf): Message = {
     if (buf.length < 4)
-      throw BadMessageException("short message")
+      throwBadMessageException("short message")
     val br = BufReader(buf)
     val head = br.readIntBE()
     val rest = br.readAll()
@@ -623,7 +630,7 @@ private[twitter] object Message {
       case Types.Rdiscarded => Rdiscarded(tag)
       case Types.Tdiscarded | Types.BAD_Tdiscarded => decodeTdiscarded(rest)
       case Types.Tlease => decodeTlease(rest)
-      case unknown => throw new BadMessageException(unknownMessageDescription(unknown, tag, rest))
+      case unknown => throwBadMessageException(unknownMessageDescription(unknown, tag, rest))
     }
   }
 
@@ -631,7 +638,7 @@ private[twitter] object Message {
     case m: PreEncodedTping => m.buf
     case m: Message =>
       if (m.tag < Tags.MarkerTag || (m.tag & ~Tags.TagMSB) > Tags.MaxTag)
-        throw new BadMessageException(s"invalid tag number ${m.tag}")
+        throwBadMessageException(s"invalid tag number ${m.tag}")
 
       val head = Array[Byte](
         m.typ,
@@ -642,6 +649,10 @@ private[twitter] object Message {
 
       Buf.ByteArray.Owned(head).concat(m.buf)
   }
+
+  // Helper method to ensure conformity of BadMessageExceptions
+  private def throwBadMessageException(why: String): Nothing =
+    throw Failure.wrap(BadMessageException(why))
 
   private def unknownMessageDescription(tpe: Byte, tag: Int, payload: Buf): String = {
     val toWrite = payload.slice(0, 16) // Limit reporting to at most 16 bytes

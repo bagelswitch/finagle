@@ -7,13 +7,15 @@ import com.twitter.finagle.netty4.transport.ChannelTransport
 import com.twitter.finagle.transport.Transport
 import com.twitter.finagle.{Failure, Stack}
 import com.twitter.io.Buf
-import com.twitter.util.{Future, Promise, NonFatal}
+import com.twitter.util.{Future, Promise}
 import io.netty.bootstrap.Bootstrap
+import io.netty.buffer.PooledByteBufAllocator
 import io.netty.channel._
 import io.netty.channel.socket.nio.NioSocketChannel
 import java.lang.{Boolean => JBool, Integer => JInt}
 import java.net.SocketAddress
 import java.nio.channels.UnresolvedAddressException
+import scala.util.control.NonFatal
 
 private[finagle] object Netty4Transporter {
   /**
@@ -40,6 +42,10 @@ private[finagle] object Netty4Transporter {
     init: ChannelInitializer[Channel],
     params: Stack.Params
   ): Transporter[In, Out] = new Transporter[In, Out] {
+
+    // Exports N4-related metrics under `finagle/netty4`.
+    exportNetty4Metrics()
+
     def apply(addr: SocketAddress): Future[Transport[In, Out]] = {
       val Transport.Options(noDelay, reuseAddr) = params[Transport.Options]
       val LatencyCompensation.Compensation(compensation) = params[LatencyCompensation.Compensation]
@@ -62,6 +68,12 @@ private[finagle] object Netty4Transporter {
           .option[JBool](ChannelOption.AUTO_READ, !backpressure) // backpressure! no reads on transport => no reads on the socket
           .option[JInt](ChannelOption.CONNECT_TIMEOUT_MILLIS, compensatedConnectTimeoutMs.toInt)
           .handler(init)
+
+      // Use pooling if enabled.
+      if (poolReceiveBuffers()) {
+        bootstrap.option(ChannelOption.RCVBUF_ALLOCATOR,
+          new RecvByteBufAllocatorProxy(PooledByteBufAllocator.DEFAULT))
+      }
 
       val Transport.Liveness(_, _, keepAlive) = params[Transport.Liveness]
       keepAlive.foreach(bootstrap.option[JBool](ChannelOption.SO_KEEPALIVE, _))

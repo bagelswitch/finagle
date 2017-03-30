@@ -1,6 +1,7 @@
 package com.twitter.finagle
 
-import com.twitter.util.Await
+import com.twitter.conversions.time._
+import com.twitter.util.{Await, Return}
 import org.junit.runner.RunWith
 import org.scalacheck.Gen
 import org.scalatest.FunSuite
@@ -39,7 +40,7 @@ class StatusTest
   test("Status.worst") {
     forAll(status2) { case (left, right) =>
       val s = Status.worst(left, right)
-      Ordering[Status].equiv(left, right) || s == Ordering[Status].max(left, right)
+      assert(Ordering[Status].equiv(left, right) || s == Ordering[Status].min(left, right))
     }
   }
 
@@ -47,7 +48,7 @@ class StatusTest
   test("Status.best") {
     forAll(status2) { case (left, right) =>
       val s = Status.best(left, right)
-      Ordering[Status].equiv(left, right) || s == Ordering[Status].min(left, right)
+      assert(Ordering[Status].equiv(left, right) || s == Ordering[Status].max(left, right))
     }
   }
 
@@ -55,22 +56,22 @@ class StatusTest
     @volatile var status: Status = Status.Busy
     val open = Status.whenOpen(status)
 
-    assert(!open.isDone)
+    assert(open.poll.isEmpty)
 
     status = Status.Open
-    eventually { assert(open.isDone) }
-    Await.result(open)  // no exceptions
+    eventually { assert(open.poll == Some(Return.Unit)) }
+    Await.result(open, 5.seconds)  // no exceptions
   }
 
   test("Status.whenOpen - closes") {
     @volatile var status: Status = Status.Busy
     val open = Status.whenOpen(status)
 
-    assert(!open.isDone)
+    assert(open.poll.isEmpty)
 
     status = Status.Closed
-    eventually { assert(open.isDefined) }
-    intercept[Status.ClosedException] { Await.result(open) }
+    eventually { assert(open.poll.isDefined) }
+    intercept[Status.ClosedException] { Await.result(open, 5.seconds) }
   }
 
   test("Ordering spot check") {
@@ -79,7 +80,7 @@ class StatusTest
       right <- Gen.choose(0, ord.length-1) } yield (left, right)
 
     forAll(idx2) { case (left, right) =>
-      Ordering[Status].compare(ord(left), ord(right)).signum == (left - right).signum
+      assert(Ordering[Status].compare(ord(left), ord(right)).signum == (left - right).signum)
     }
   }
 }

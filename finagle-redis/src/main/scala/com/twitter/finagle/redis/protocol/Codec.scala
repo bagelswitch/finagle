@@ -1,16 +1,10 @@
 package com.twitter.finagle.redis.protocol
 
-import com.twitter.finagle.netty3.ChannelBufferBuf
-import com.twitter.finagle.redis.util.{StringToBuf, StringToChannelBuffer}
-import com.twitter.io.{ConcatBuf, Buf}
-import org.jboss.netty.buffer.{ChannelBuffer, ChannelBuffers}
-import scala.collection.immutable.WrappedString
+import com.twitter.finagle.redis.util.StringToChannelBuffer
+import com.twitter.io.Buf
+import org.jboss.netty.buffer.ChannelBuffers
 
 private[redis] object RedisCodec {
-  object NilValue extends WrappedString("nil") {
-    def getBytes(charset: String = "UTF_8") = Array[Byte]()
-    def getBytes = Array[Byte]()
-  }
 
   val STATUS_REPLY        = '+'
   val ERROR_REPLY         = '-'
@@ -24,7 +18,7 @@ private[redis] object RedisCodec {
   val TOKEN_DELIMITER     = ' '
   val EOL_DELIMITER       = "\r\n"
 
-  val NIL_VALUE           = NilValue
+  val NIL_VALUE           = "nil"
   val NIL_VALUE_BA        = ChannelBuffers.EMPTY_BUFFER
 
 
@@ -47,46 +41,13 @@ private[redis] object RedisCodec {
   val POS_INFINITY_BA     = StringToChannelBuffer("+inf")
   val NEG_INFINITY_BA     = StringToChannelBuffer("-inf")
 
-  val BULK_REPLY_BUF: Buf       = StringToBuf("$")
-  val MBULK_REPLY_BUF: Buf      = StringToBuf("*")
+  val BULK_REPLY_BUF: Buf       = Buf.Utf8("$")
+  val MBULK_REPLY_BUF: Buf      = Buf.Utf8("*")
 
   val ARG_COUNT_MARKER_BUF: Buf = MBULK_REPLY_BUF
   val ARG_SIZE_MARKER_BUF: Buf  = BULK_REPLY_BUF
 
-  val EOL_DELIMITER_BUF: Buf    = StringToBuf(EOL_DELIMITER)
+  val EOL_DELIMITER_BUF: Buf    = Buf.Utf8(EOL_DELIMITER)
 
   val NIL_VALUE_BUF: Buf        = Buf.Empty
-
-
-  def toUnifiedFormat(args: Seq[ChannelBuffer], includeHeader: Boolean = true): ChannelBuffer = {
-    val bufArgs = args.map(ChannelBufferBuf.Owned(_))
-    ChannelBufferBuf.Owned.extract(toUnifiedBuf(bufArgs, includeHeader))
-  }
-
-  def bufToUnifiedChannelBuffer(args: Seq[Buf], includeHeader: Boolean = true): ChannelBuffer =
-    ChannelBufferBuf.Owned.extract(toUnifiedBuf(args, includeHeader))
-
-  def toUnifiedBuf(args: Seq[Buf], includeHeader: Boolean = true): Buf = {
-    val header: Vector[Buf] =
-      if (!includeHeader) Vector.empty else {
-        Vector(
-          ARG_COUNT_MARKER_BUF,
-          StringToBuf(args.length.toString),
-          EOL_DELIMITER_BUF)
-      }
-    val bufs = args.flatMap { arg =>
-      Vector(
-        ARG_SIZE_MARKER_BUF,
-        StringToBuf(arg.length.toString),
-        EOL_DELIMITER_BUF,
-        arg,
-        EOL_DELIMITER_BUF)
-    }
-    ConcatBuf(header ++ bufs)
-  }
-}
-
-abstract class RedisMessage {
-  def toChannelBuffer: ChannelBuffer
-  def toByteArray: Array[Byte] = toChannelBuffer.array
 }

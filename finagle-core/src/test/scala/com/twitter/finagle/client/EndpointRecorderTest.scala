@@ -2,14 +2,13 @@ package com.twitter.finagle.client
 
 import com.twitter.finagle._
 import com.twitter.finagle.Namer.AddrWeightKey
-import com.twitter.finagle.param.Label
 import com.twitter.util._
 import org.junit.runner.RunWith
 import org.scalatest.FunSuite
 import org.scalatest.junit.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
-class EndpointRecorderTest extends FunSuite {
+final class EndpointRecorderTest extends FunSuite {
 
   val name = "fooClient"
   val path = "/foo"

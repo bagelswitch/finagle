@@ -4,7 +4,7 @@ import com.twitter.finagle
 import com.twitter.finagle.client._
 import com.twitter.finagle.dispatch.GenSerialClientDispatcher
 import com.twitter.finagle.netty3.Netty3Transporter
-import com.twitter.finagle.param.{Monitor => _, ResponseClassifier => _, ExceptionStatsHandler => _, Tracer => _, _}
+import com.twitter.finagle.param.{ExceptionStatsHandler => _, Monitor => _, ResponseClassifier => _, Tracer => _, _}
 import com.twitter.finagle.redis.exp.RedisPool
 import com.twitter.finagle.redis.protocol.{Command, Reply}
 import com.twitter.finagle.service.{ResponseClassifier, RetryBudget}
@@ -66,10 +66,13 @@ object Redis extends Client[Command, Reply] with RedisRichClient {
     protected type Out = Reply
 
     protected def newTransporter(): Transporter[In, Out] =
-      Netty3Transporter(redis.protocol.RedisClientPipelineFactory, params)
+      Netty3Transporter(redis.protocol.Netty3.Codec, params)
 
     protected def newDispatcher(transport: Transport[In, Out]): Service[Command, Reply] =
-      RedisPool.newDispatcher(transport, params[finagle.param.Stats].statsReceiver.scope(GenSerialClientDispatcher.StatsScope))
+      RedisPool.newDispatcher(
+        transport,
+        params[finagle.param.Stats].statsReceiver.scope(GenSerialClientDispatcher.StatsScope)
+      )
 
     // Java-friendly forwarders
     // See https://issues.scala-lang.org/browse/SI-8905

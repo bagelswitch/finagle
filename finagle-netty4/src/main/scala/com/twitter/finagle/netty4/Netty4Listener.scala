@@ -2,17 +2,21 @@ package com.twitter.finagle.netty4
 
 import com.twitter.concurrent.NamedPoolThreadFactory
 import com.twitter.finagle._
-import com.twitter.finagle.netty4.channel.{ServerBridge, Netty4ServerChannelInitializer}
+import com.twitter.finagle.netty4.channel.{
+  Netty4FramedServerChannelInitializer, Netty4RawServerChannelInitializer,
+  RecvByteBufAllocatorProxy, ServerBridge
+}
 import com.twitter.finagle.netty4.transport.ChannelTransport
 import com.twitter.finagle.param.Timer
 import com.twitter.finagle.server.Listener
 import com.twitter.finagle.transport.Transport
 import com.twitter.util._
 import io.netty.bootstrap.ServerBootstrap
+import io.netty.buffer.PooledByteBufAllocator
 import io.netty.channel._
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioServerSocketChannel
-import io.netty.util.concurrent.{Future => NettyFuture, FutureListener}
+import io.netty.util.concurrent.{FutureListener, Future => NettyFuture}
 import java.lang.{Boolean => JBool, Integer => JInt}
 import java.net.SocketAddress
 import java.util.concurrent.TimeUnit
@@ -48,9 +52,12 @@ private[finagle] case class Netty4Listener[In, Out](
     pipelineInit: ChannelPipeline => Unit,
     params: Stack.Params,
     transportFactory: Channel => Transport[In, Out] = new ChannelTransport[In, Out](_),
-    handlerDecorator: ChannelInitializer[Channel] => ChannelHandler = identity
-  ) extends Listener[In, Out] {
+    setupMarshalling: ChannelInitializer[Channel] => ChannelHandler = identity)
+  extends Listener[In, Out] {
   import Netty4Listener.BackPressure
+
+  // Exports N4-related metrics under `finagle/netty4`.
+  exportNetty4Metrics()
 
   private[this] val Timer(timer) = params[Timer]
 
@@ -78,7 +85,7 @@ private[finagle] case class Netty4Listener[In, Out](
   def listen(addr: SocketAddress)(serveTransport: Transport[In, Out] => Unit): ListeningServer =
     new ListeningServer with CloseAwaitably {
 
-      val newBridge = () => new ServerBridge(
+      val bridge = new ServerBridge(
         transportFactory,
         serveTransport
       )
@@ -97,6 +104,14 @@ private[finagle] case class Netty4Listener[In, Out](
       bootstrap.option(ChannelOption.ALLOCATOR, allocator)
       bootstrap.childOption(ChannelOption.ALLOCATOR, allocator)
 
+      // Use pooling if enabled.
+      if (poolReceiveBuffers()) {
+        bootstrap.option(ChannelOption.RCVBUF_ALLOCATOR,
+          new RecvByteBufAllocatorProxy(PooledByteBufAllocator.DEFAULT))
+        bootstrap.childOption(ChannelOption.RCVBUF_ALLOCATOR,
+          new RecvByteBufAllocatorProxy(PooledByteBufAllocator.DEFAULT))
+      }
+
       bootstrap.option[JBool](ChannelOption.SO_REUSEADDR, reuseAddr)
       bootstrap.option[JInt](ChannelOption.SO_LINGER, 0)
       backlog.foreach(bootstrap.option[JInt](ChannelOption.SO_BACKLOG, _))
@@ -109,13 +124,62 @@ private[finagle] case class Netty4Listener[In, Out](
         bootstrap.childOption[JInt](Netty4Listener.TrafficClass, tc)
       }
 
-      val initializer = new Netty4ServerChannelInitializer(pipelineInit, params, newBridge)
-      bootstrap.childHandler(handlerDecorator(initializer))
+      val rawInitializer = new Netty4RawServerChannelInitializer(params)
+      val framedInitializer = new Netty4FramedServerChannelInitializer(params)
+
+      // our netty pipeline is divided into four chunks:
+      // raw => marshalling => framed => bridge
+      // `pipelineInit` sets up the marshalling handlers
+      // `rawInitializer` adds the raw handlers to the beginning
+      // `framedInitializer` adds the framed handlers to the end
+      // `bridge` adds the bridging handler to the end.
+      //
+      // This order is necessary because the bridge must be at the end, raw must
+      // be before marshalling, and marshalling must be before framed.  This
+      // creates an ordering:
+      //
+      // raw => marshalling
+      // marshalling => framed
+      // raw => bridge
+      // marshalling => bridge
+      // framed => bridge
+      //
+      // The only way to satisfy this ordering is
+      //
+      // raw => marshalling => framed => bridge.
+      bootstrap.childHandler(new ChannelInitializer[Channel] {
+        def initChannel(ch: Channel): Unit = {
+
+          // pipelineInit comes first so that implementors can put whatever they
+          // want in pipelineInit, without having to worry about clobbering any
+          // of the other handlers.
+          pipelineInit(ch.pipeline)
+          ch.pipeline.addLast(rawInitializer)
+
+          // we use `setupMarshalling` to support protocols where the
+          // connection is multiplexed over child channels in the
+          // netty layer
+          ch.pipeline.addLast("marshalling", setupMarshalling(new ChannelInitializer[Channel] {
+            def initChannel(ch: Channel): Unit = {
+              ch.pipeline.addLast("framedInitializer", framedInitializer)
+
+              // The bridge handler must be last in the pipeline to ensure
+              // that the bridging code sees all encoding and transformations
+              // of inbound messages.
+              ch.pipeline.addLast("finagleBridge", bridge)
+            }
+          }))
+        }
+      })
 
       // Block until listening socket is bound. `ListeningServer`
       // represents a bound server and if we don't block here there's
       // a race between #listen and #boundAddress being available.
-      val ch = bootstrap.bind(addr).awaitUninterruptibly().channel()
+      val bound = bootstrap.bind(addr).awaitUninterruptibly()
+      if (!bound.isSuccess)
+        throw new java.net.BindException(s"Failed to bind to ${addr.toString}: ${bound.cause().getMessage}")
+
+      val ch = bound.channel()
 
       /**
        * Immediately close the listening socket then shutdown the netty

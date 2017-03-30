@@ -7,22 +7,23 @@ import com.typesafe.sbt.site.SphinxSupport.Sphinx
 import pl.project13.scala.sbt.JmhPlugin
 import sbtunidoc.Plugin.UnidocKeys._
 import sbtunidoc.Plugin.{ScalaUnidoc, unidocSettings}
-import scoverage.ScoverageSbtPlugin
+import scoverage.ScoverageKeys
 
 object Finagle extends Build {
   val branch = Process("git" :: "rev-parse" :: "--abbrev-ref" :: "HEAD" :: Nil).!!.trim
   val suffix = if (branch == "master") "" else "-SNAPSHOT"
 
-  val libVersion = "6.38.0-SPLAT-SNAPSHOT" + suffix
-  val utilVersion = "6.37.0" + suffix
-  val ostrichVersion = "9.21.0" + suffix
-  val scroogeVersion = "4.10.0" + suffix
+  val libVersion = "6.41.0-SPLAT-SNAPSHOT" + suffix
+  val utilVersion = "6.40.0" + suffix
+  val ostrichVersion = "9.24.0" + suffix
+  val scroogeVersion = "4.13.0" + suffix
 
-  val libthriftVersion = "0.5.0-1"
-  val netty4Version = "4.1.4.Final"
+  val libthriftVersion = "0.5.0-7"
+
+  val netty4Version = "4.1.6.Final"
 
   val guavaLib = "com.google.guava" % "guava" % "16.0.1"
-  val caffeineLib = "com.github.ben-manes.caffeine" % "caffeine" % "2.3.0"
+  val caffeineLib = "com.github.ben-manes.caffeine" % "caffeine" % "2.3.4"
   val jsr305Lib = "com.google.code.findbugs" % "jsr305" % "2.0.1"
   val nettyLib = "io.netty" % "netty" % "3.10.1.Final"
   val netty4Libs = Seq(
@@ -33,7 +34,7 @@ object Finagle extends Build {
   val netty4Http = "io.netty" % "netty-codec-http" % netty4Version
   val netty4Http2 = "io.netty" % "netty-codec-http2" % netty4Version
   val ostrichLib = "com.twitter" %% "ostrich" % ostrichVersion
-  val jacksonVersion = "2.6.5"
+  val jacksonVersion = "2.8.4"
   val jacksonLibs = Seq(
     "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
     "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
@@ -41,7 +42,7 @@ object Finagle extends Build {
     guavaLib
   )
   val thriftLibs = Seq(
-    "org.apache.thrift" % "libthrift" % libthriftVersion intransitive(),
+    "com.twitter" % "libthrift" % libthriftVersion intransitive(),
     "org.slf4j" % "slf4j-api" % "1.7.7" % "provided"
   )
   val scroogeLibs = thriftLibs ++ Seq(
@@ -56,16 +57,16 @@ object Finagle extends Build {
   val sharedSettings = Seq(
     version := libVersion,
     organization := "com.twitter",
-    scalaVersion := "2.11.8",
+    scalaVersion := "2.12.1",
+    crossScalaVersions := Seq("2.11.8", "2.12.1"),
     libraryDependencies ++= Seq(
-      "org.scalacheck" %% "scalacheck" % "1.12.5" % "test",
-      "org.scalatest" %% "scalatest" % "2.2.6" % "test",
+      "org.scalacheck" %% "scalacheck" % "1.13.4" % "test",
+      "org.scalatest" %% "scalatest" % "3.0.0" % "test",
       "junit" % "junit" % "4.10" % "test",
       "org.mockito" % "mockito-all" % "1.9.5" % "test"
     ),
-    resolvers += "twitter-repo" at "https://maven.twttr.com",
 
-    ScoverageSbtPlugin.ScoverageKeys.coverageHighlighting := true,
+    ScoverageKeys.coverageHighlighting := true,
     ScroogeSBT.autoImport.scroogeLanguages in Test := Seq("java", "scala"),
 
     javaOptions in Test := Seq("-DSKIP_FLAKY=1"),
@@ -134,7 +135,7 @@ object Finagle extends Build {
     // Prevent eviction warnings
     dependencyOverrides <++= scalaVersion { vsn =>
       Set(
-        "org.apache.thrift" % "libthrift" % libthriftVersion
+        "com.twitter" % "libthrift" % libthriftVersion
       )
     },
 
@@ -177,6 +178,7 @@ object Finagle extends Build {
 
     // Protocols
     finagleHttp,
+    finagleBaseHttp,
     finagleHttp2,
     finagleHttpCompat,
     finagleStream,
@@ -214,9 +216,11 @@ object Finagle extends Build {
   ).dependsOn(
     finagleCore,
     finagleHttp,
+    finagleHttp2,
     finagleMySQL,
     finagleMemcached,
     finagleMux,
+    finagleNetty4Http,
     finagleThrift,
     finagleThriftMux % "test->compile;test->test"
   )
@@ -276,7 +280,7 @@ object Finagle extends Build {
       util("stats"),
       netty4Http
     ) ++ netty4Libs
-  ).dependsOn(finagleCore)
+  ).dependsOn(finagleCore, finagleToggle)
 
   lazy val finagleOstrich4 = Project(
     id = "finagle-ostrich4",
@@ -300,7 +304,7 @@ object Finagle extends Build {
   ).settings(
     name := "finagle-stats",
     libraryDependencies ++= Seq(
-      "com.twitter.common" % "metrics" % "0.0.37",
+      "com.twitter.common" % "metrics" % "0.0.38",
       util("app"),
       util("core"),
       util("events"),
@@ -360,7 +364,7 @@ object Finagle extends Build {
   ).settings(
     name := "finagle-commons-stats",
     libraryDependencies ++= Seq(
-      "com.twitter.common" % "stats" % "0.0.114",
+      "com.twitter.common" % "stats" % "0.0.115",
       util("registry"),
       util("stats")
     )
@@ -379,28 +383,26 @@ object Finagle extends Build {
       util("cache"),
       util("zk-common"),
       util("zk-test") % "test",
-      "com.twitter.common.zookeeper" % "server-set" % "1.0.103",
+      "com.twitter" % "libthrift" % libthriftVersion,
+      "com.twitter.common" % "io-json" % "0.0.54",
+      "com.twitter.common.zookeeper" % "server-set" % "1.0.111" excludeAll(
+        ExclusionRule("com.twitter", "finagle-core-java"),
+        ExclusionRule("com.twitter", "finagle-core_2.11"),
+        ExclusionRule("com.twitter", "util-core-java"),
+        ExclusionRule("com.twitter", "util-core_2.11"),
+        ExclusionRule("com.twitter.common", "service-thrift"),
+        ExclusionRule("org.apache.thrift", "libthrift"),
+        ExclusionRule("org.apache.zookeeper", "zookeeper"),
+        ExclusionRule("org.apache.zookeeper", "zookeeper-client"),
+        ExclusionRule("org.scala-lang.modules", "scala-parser-combinators_2.11")
+      ),
+      "com.twitter.common" % "service-thrift" % "1.0.55" excludeAll(
+        ExclusionRule("org.apache.thrift", "libthrift")
+      ),
       guavaLib
     ),
-
     libraryDependencies ++= jacksonLibs,
-    excludeFilter in unmanagedSources := "ZkTest.scala",
-    ivyXML :=
-      <dependencies>
-        <dependency org="com.twitter.common.zookeeper" name="server-set" rev="1.0.103">
-          <exclude org="com.google.guava" name="guava"/>
-          <exclude org="com.twitter" name="finagle-core"/>
-          <exclude org="com.twitter" name="finagle-thrift"/>
-          <exclude org="com.twitter" name="util-core"/>
-          <exclude org="com.twitter" name="util-logging"/>
-          <exclude org="com.twitter.common" name="jdk-logging"/>
-          <exclude org="com.twitter.common" name="stats"/>
-          <exclude org="com.twitter.common" name="util-executor-service-shutdown"/>
-          <exclude org="io.netty" name="netty"/>
-          <exclude org="javax.activation" name="activation"/>
-          <exclude org="javax.mail" name="mail"/>
-        </dependency>
-      </dependencies>
+    excludeFilter in unmanagedSources := "ZkTest.scala"
   ).dependsOn(finagleCore)
 
   // Protocol support
@@ -419,6 +421,20 @@ object Finagle extends Build {
       "commons-lang" % "commons-lang" % "2.6",
       guavaLib
     )
+  ).dependsOn(finagleBaseHttp, finagleNetty4Http, finagleToggle)
+
+  lazy val finagleBaseHttp = Project(
+    id = "finagle-base-http",
+    base = file("finagle-base-http"),
+    settings = Defaults.coreDefaultSettings ++
+      sharedSettings
+  ).settings(
+    name := "finagle-base-http",
+    libraryDependencies ++= Seq(
+      util("collection"),
+      util("logging"),
+      "commons-lang" % "commons-lang" % "2.6"
+    )
   ).dependsOn(finagleCore)
 
   lazy val finagleNetty4Http = Project(
@@ -433,7 +449,7 @@ object Finagle extends Build {
       "commons-lang" % "commons-lang" % "2.6",
       netty4Http
     )
-  ).dependsOn(finagleCore, finagleNetty4, finagleHttp % "test->test;compile->compile")
+  ).dependsOn(finagleNetty4, finagleBaseHttp)
 
   lazy val finagleHttp2 = Project(
     id = "finagle-http2",
@@ -444,6 +460,7 @@ object Finagle extends Build {
     name := "finagle-http2",
     libraryDependencies ++= Seq(
       netty4Http2,
+      util("cache"),
       util("core"),
       util("logging"),
       nettyLib
@@ -486,9 +503,8 @@ object Finagle extends Build {
     name := "finagle-thrift",
     libraryDependencies ++=
       Seq(
-        "silly" % "silly-thrift" % "0.5.0" % "test",
         "commons-lang" % "commons-lang" % "2.6" % "test") ++ scroogeLibs
-  ).dependsOn(finagleCore)
+  ).dependsOn(finagleCore, finagleNetty4, finagleToggle)
 
   lazy val finagleMemcached = Project(
     id = "finagle-memcached",
@@ -501,11 +517,62 @@ object Finagle extends Build {
       util("hashing"),
       util("zk-test") % "test",
       guavaLib,
-      "com.twitter" %% "bijection-core" % "0.9.2",
-      "com.twitter.common" % "zookeeper-testing" % "0.0.53" % "test"
+      "com.twitter" %% "bijection-core" % "0.9.4",
+      "com.twitter.common" % "io-json" % "0.0.54",
+      "com.twitter.common" % "zookeeper-testing" % "0.0.56" % "test" excludeAll(
+        // These exclusions are necessary because zookeeper-testing has an explicit
+        // dependency on scala 2.11 and some 2.11 scala libraries
+        ExclusionRule("com.google.testing", "test-libraries-for-java"),
+        ExclusionRule("com.twitter", "finagle-core-java"),
+        ExclusionRule("com.twitter", "finagle-core_2.11"),
+        ExclusionRule("com.twitter", "finagle-core_2.12"),
+        ExclusionRule("com.twitter", "finagle-http_2.11"),
+        ExclusionRule("com.twitter", "finagle-http_2.12"),
+        ExclusionRule("com.twitter", "finagle-http-java"),
+        ExclusionRule("com.twitter", "finagle-stats_2.11"),
+        ExclusionRule("com.twitter", "finagle-stats_2.12"),
+        ExclusionRule("com.twitter", "finagle-toggle_2.11"),
+        ExclusionRule("com.twitter", "finagle-toggle_2.12"),
+        ExclusionRule("com.twitter", "util-app_2.11"),
+        ExclusionRule("com.twitter", "util-app_2.12"),
+        ExclusionRule("com.twitter", "util-codec_2.11"),
+        ExclusionRule("com.twitter", "util-codec_2.12"),
+        ExclusionRule("com.twitter", "util-collection_2.11"),
+        ExclusionRule("com.twitter", "util-collection_2.12"),
+        ExclusionRule("com.twitter", "util-core-java"),
+        ExclusionRule("com.twitter", "util-core_2.11"),
+        ExclusionRule("com.twitter", "util-core_2.12"),
+        ExclusionRule("com.twitter", "util-lint_2.11"),
+        ExclusionRule("com.twitter", "util-list_2.12"),
+        ExclusionRule("com.twitter", "util-logging_2.11"),
+        ExclusionRule("com.twitter", "util-logging_2.12"),
+        ExclusionRule("com.twitter", "util-registry_2.11"),
+        ExclusionRule("com.twitter", "util-registry_2.12"),
+        ExclusionRule("com.twitter", "util-stats_2.11"),
+        ExclusionRule("com.twitter", "util-stats_2.12"),
+        ExclusionRule("com.twitter", "twitter-server_2.11"),
+        ExclusionRule("com.twitter.common", "metrics"),
+        ExclusionRule("com.twitter.common", "service-thrift"),
+        ExclusionRule("org.apache.thrift", "libthrift"),
+        ExclusionRule("org.apache.zookeeper", "zookeeper"),
+        ExclusionRule("org.apache.zookeeper", "zookeeper-client"),
+        ExclusionRule("org.apache.zookeeper", "zookeeper-server"),
+        ExclusionRule("com.fasterxml.jackson.module", "jackson-module-scala_2.11"),
+        ExclusionRule("com.fasterxml.jackson.module", "jackson-module-scala_2.12"),
+        ExclusionRule("org.scala-lang.modules", "scala-parser-combinators_2.11"),
+        ExclusionRule("org.scala-lang.modules", "scala-parser-combinators_2.12"),
+        ExclusionRule("org.scala-lang.modules", "scala-xml_2.11"),
+        ExclusionRule("org.scala-lang.modules", "scala-xml_2.12")
+      ),
+      "com.twitter" % "libthrift" % libthriftVersion
     ),
     libraryDependencies ++= jacksonLibs
-  ).dependsOn(finagleCore, finagleNetty4, finagleServersets)
+  ).dependsOn(
+  finagleCore,
+  finagleNetty4,
+  finagleServersets,
+  finagleStats,
+  finagleToggle)
 
   lazy val finagleKestrel = Project(
     id = "finagle-kestrel",
@@ -515,8 +582,14 @@ object Finagle extends Build {
   ).settings(
     name := "finagle-kestrel",
     libraryDependencies ++= scroogeLibs :+ caffeineLib
-  ).dependsOn(finagleCore, finagleMemcached, finagleThrift)
-
+  ).dependsOn(
+    finagleCore,
+    finagleMemcached,
+    finagleNetty4,
+    finagleThrift,
+    finagleThriftMux,
+    finagleToggle)
+  
   lazy val finagleRedis = Project(
     id = "finagle-redis",
     base = file("finagle-redis"),
@@ -544,8 +617,11 @@ object Finagle extends Build {
       util("core"),
       util("logging"),
       util("stats"),
-      "com.twitter.common" % "stats-util" % "0.0.58")
-  ).dependsOn(finagleCore, finagleNetty4)
+      "com.twitter.common" % "stats-util" % "0.0.59")
+  ).dependsOn(
+    finagleCore,
+    finagleNetty4,
+    finagleToggle)
 
   lazy val finagleThriftMux = Project(
     id = "finagle-thriftmux",
@@ -569,7 +645,7 @@ object Finagle extends Build {
       name := "finagle-mysql",
       libraryDependencies ++= Seq(util("logging"), util("cache"), caffeineLib, jsr305Lib),
       excludeFilter in unmanagedSources := { "EmbeddableMysql.scala" || "ClientTest.scala" }
-    ).dependsOn(finagleCore, finagleNetty4)
+    ).dependsOn(finagleCore, finagleNetty4, finagleToggle)
 
   lazy val finagleExp = Project(
     id = "finagle-exp",
@@ -580,8 +656,6 @@ object Finagle extends Build {
       name := "finagle-exp"
     ).dependsOn(finagleCore, finagleThrift)
 
-  // Uses
-
   lazy val finagleMdns = Project(
     id = "finagle-mdns",
     base = file("finagle-mdns"),
@@ -589,7 +663,7 @@ object Finagle extends Build {
       sharedSettings
   ).settings(
     name := "finagle-mdns",
-    libraryDependencies += "javax.jmdns" % "jmdns" % "3.4.1"
+    libraryDependencies += "org.jmdns" % "jmdns" % "3.5.1"
   ).dependsOn(finagleCore)
 
   lazy val finagleExample = Project(
@@ -634,7 +708,6 @@ object Finagle extends Build {
     name := "finagle-benchmark",
     libraryDependencies ++= Seq(
       util("codec"),
-      "com.twitter.common" % "metrics-data-sample" % "0.0.1",
       "org.apache.curator" % "curator-test" % "2.8.0",
       "org.apache.curator" % "curator-framework" % "2.8.0"
     )

@@ -1,4 +1,4 @@
-target(name='scala',
+target(
   dependencies=[
     ':client',
     ':defaultloader',
@@ -40,11 +40,10 @@ junit_tests(name='serversets',
     'finagle/finagle-serversets/src/test/resources'
   ],
   sources=globs(
-    'com/twitter/finagle/*.scala',
+    'com/twitter/*.scala',
     'com/twitter/finagle/serverset2/*.scala',
     'com/twitter/finagle/serverset2/addr/*.scala',
     'com/twitter/finagle/serverset2/naming/*.scala',
     'com/twitter/finagle/zookeeper/*.scala',
-  ),
-  known_to_fail="TRFC-679",
+  )
 )

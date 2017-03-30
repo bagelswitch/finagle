@@ -10,10 +10,11 @@ import com.twitter.finagle.transport.{Transport, TransportProxy}
 import com.twitter.finagle.{Failure, Path, Dtab}
 import com.twitter.io.Buf
 import com.twitter.logging.Level
-import com.twitter.util.{Future, NonFatal, Try, Return, Promise, Throw, Updatable}
+import com.twitter.util.{Future, Try, Return, Promise, Throw, Updatable}
 import java.util.logging.Logger
 import org.apache.thrift.protocol.{TProtocolFactory, TMessage, TMessageType}
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 /**
  * A [[com.twitter.finagle.transport.Transport]] that manages the downgrading
@@ -116,7 +117,7 @@ private[finagle] object ThriftEmulator {
             // Rerr corresponds to (tag=0x010001).
             //
             // The hazards of protocol multiplexing.
-            case Throw(_: BadMessageException) |
+            case Throw(Failure(Some(_: BadMessageException))) |
                  Return(Message.Rerr(65537, _)) |
                  Return(Message.Rerr(65540, _)) =>
 

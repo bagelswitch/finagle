@@ -1,4 +1,4 @@
-junit_tests(name='scala',
+junit_tests(
   dependencies=[
     '3rdparty/jvm/com/google/code/findbugs:jsr305',
     '3rdparty/jvm/com/google/guava',
@@ -8,15 +8,14 @@ junit_tests(name='scala',
     '3rdparty/jvm/org/mockito:mockito-all',
     '3rdparty/jvm/org/scalacheck',
     '3rdparty/jvm/org/scalatest',
+    'finagle/finagle-core',
+    'finagle/finagle-http',
+    'finagle/finagle-toggle',
     scoped('util/util-app', scope='forced'),
     'util/util-collection',
     'util/util-logging',
     'util/util-stats',
-    'finagle/finagle-core/src/main/scala:scala',
-    'finagle/finagle-http/src/main/scala:scala',
-    'util/util-core/src/main/scala:scala',
   ],
   fatal_warnings=True,
-  strict_deps=True,
   sources=rglobs('*.scala')
 )

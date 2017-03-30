@@ -1,7 +1,7 @@
 package com.twitter.finagle.service
 
 import com.twitter.conversions.time._
-import com.twitter.finagle.{Filter, Service}
+import com.twitter.finagle.{FailureFlags, Filter, Service}
 import com.twitter.finagle.Filter.TypeAgnostic
 import com.twitter.finagle.param.HighResTimer
 import com.twitter.finagle.stats.{StatsReceiver, NullStatsReceiver}
@@ -63,6 +63,12 @@ class RetryFilter[Req, Rep](
     RetryBudget()
   )
 
+  // Respect non-retryablity regardless of which filter is used
+  private[this] val filteredPolicy: RetryPolicy[(Req, Try[Rep])] = retryPolicy.filterEach {
+    case (_, Throw(f: FailureFlags[_])) if f.isFlagged(FailureFlags.NonRetryable) => false
+    case _ => true
+  }
+
   private[this] val retriesStat = statsReceiver.stat("retries")
 
   private[this] val budgetExhausted =
@@ -97,7 +103,7 @@ class RetryFilter[Req, Rep](
           } else {
             budgetExhausted.incr()
             retriesStat.add(count)
-            svcRep
+            svcRep.transform(FailureFlags.asNonRetryable)
           }
         case None =>
           retriesStat.add(count)
@@ -108,7 +114,7 @@ class RetryFilter[Req, Rep](
 
   def apply(request: Req, service: Service[Req, Rep]): Future[Rep] = {
     retryBudget.deposit()
-    dispatch(request, service, retryPolicy)
+    dispatch(request, service, filteredPolicy)
   }
 }
 

@@ -4,7 +4,7 @@ import com.twitter.conversions.time._
 import com.twitter.finagle._
 import com.twitter.finagle.filter._
 import com.twitter.finagle.param._
-import com.twitter.finagle.service.{ExpiringService, DeadlineStatsFilter, StatsFilter, TimeoutFilter}
+import com.twitter.finagle.service.{ExpiringService, StatsFilter, TimeoutFilter}
 import com.twitter.finagle.stack.Endpoint
 import com.twitter.finagle.Stack.{Role, Param}
 import com.twitter.finagle.stats.ServerStatsReceiver
@@ -50,7 +50,6 @@ object StackServer {
    *
    * @see [[com.twitter.finagle.tracing.ServerDestTracingProxy]]
    * @see [[com.twitter.finagle.service.TimeoutFilter]]
-   * @see [[com.twitter.finagle.service.DeadlineStatsFilter]]
    * @see [[com.twitter.finagle.filter.DtabStatsFilter]]
    * @see [[com.twitter.finagle.service.StatsFilter]]
    * @see [[com.twitter.finagle.filter.RequestSemaphoreFilter]]
@@ -62,8 +61,7 @@ object StackServer {
    * @see [[com.twitter.finagle.filter.ServerStatsFilter]]
    */
   def newStack[Req, Rep]: Stack[ServiceFactory[Req, Rep]] = {
-    val stk = new StackBuilder[ServiceFactory[Req, Rep]](
-      stack.nilStack[Req, Rep])
+    val stk = new StackBuilder[ServiceFactory[Req, Rep]](stack.nilStack[Req, Rep])
 
     // We want to start expiring services as close to their instantiation
     // as possible. By installing `ExpiringService` here, we are guaranteed
@@ -72,7 +70,6 @@ object StackServer {
     stk.push(Role.serverDestTracing, ((next: ServiceFactory[Req, Rep]) =>
       new ServerDestTracingProxy[Req, Rep](next)))
     stk.push(TimeoutFilter.serverModule)
-    stk.push(DeadlineStatsFilter.module)
     stk.push(DtabStatsFilter.module)
     // Admission Control filters are inserted after `StatsFilter` so that rejected
     // requests are counted. We may need to adjust how latency are recorded
@@ -91,7 +88,7 @@ object StackServer {
     // any Tracing produced by those modules is enclosed in the appropriate
     // span.
     stk.push(TraceInitializerFilter.serverModule)
-    stk.push(MonitorFilter.module)
+    stk.push(MonitorFilter.serverModule)
     stk.result
   }
 
@@ -130,6 +127,8 @@ trait StackServer[Req, Rep]
   override def configured[P: Param](p: P): StackServer[Req, Rep]
 
   override def configured[P](psp: (P, Param[P])): StackServer[Req, Rep]
+
+  override def configuredParams(params: Stack.Params): StackServer[Req, Rep]
 }
 
 /**
@@ -188,6 +187,13 @@ trait StdStackServer[Req, Rep, This <: StdStackServer[Req, Rep, This]]
   override def configured[P](psp: (P, Stack.Param[P])): This = {
     val (p, sp) = psp
     configured(p)(sp)
+  }
+
+  /**
+   * Creates a new StackServer with additional parameters `newParams`.
+   */
+  override def configuredParams(newParams: Stack.Params): This = {
+    withParams(params ++ newParams)
   }
 
   /**

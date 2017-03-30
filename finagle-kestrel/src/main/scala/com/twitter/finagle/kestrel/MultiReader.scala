@@ -6,7 +6,7 @@ import com.twitter.finagle._
 import com.twitter.finagle.builder._
 import com.twitter.finagle.kestrel.protocol.{Response, Command, Kestrel => KestrelCodec}
 import com.twitter.finagle.stats.{Gauge, NullStatsReceiver, StatsReceiver}
-import com.twitter.finagle.thrift.{ThriftClientFramedCodecFactory, ThriftClientFramedCodec, ClientId, ThriftClientRequest}
+import com.twitter.finagle.thrift.{ClientId, ThriftClientRequest}
 import com.twitter.finagle.util.DefaultLogger
 import com.twitter.util._
 import _root_.java.net.SocketAddress
@@ -14,6 +14,7 @@ import _root_.java.util.concurrent.atomic.AtomicInteger
 import _root_.java.{util => ju}
 import scala.collection.JavaConversions._
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 /**
  * Indicates that all [[com.twitter.finagle.kestrel.ReadHandle ReadHandles]]
@@ -116,7 +117,7 @@ private[finagle] object MultiReaderHelper {
           loop(newHandles)
         },
         clusterUpdate.recv { newHandles =>
-        // Close any handles that exist in old set but not the new one.
+          // Close any handles that exist in old set but not the new one.
           (handles &~ newHandles) foreach { h =>
             logger.info(s"Closed read handle ${_root_.java.lang.System.identityHashCode(h)} due " +
               s"to its host disappeared")
@@ -190,11 +191,11 @@ private[finagle] object MultiReaderHelper {
  *   val readHandle =
  *     MultiReaderMemcache("/the/path", "the-queue")
  *       .clientBuilder(
- *         ClientBuilder()
- *           .codec(MultiReaderMemcache.codec)
- *           .requestTimeout(1.minute)
- *           .connectTimeout(1.minute)
- *           .hostConnectionLimit(1) /* etc... but do not set hosts or build */)
+ *         ClientBuilder()      /* etc... but do not set hosts or build */
+ *           .stack(Kestrel.client
+ *             .withSession.acquisitionTimeout(1.minute)
+ *             .withRequestTimeout(1.minute)
+ *             .withSessionPool.maxValue(1)))
  *       .retryBackoffs(/* Stream[Duration], Timer; optional */)
  *       .build()
  * }}}
@@ -202,7 +203,7 @@ private[finagle] object MultiReaderHelper {
 object MultiReaderMemcache {
   /**
    * Create a new MultiReader which dispatches requests to `dest` using the memcache protocol.
-   * 
+   *
    * @param dest the name of the destination which requests are dispatched to.
    *             See [[http://twitter.github.io/finagle/guide/Names.html Names]] for more detail.
    * @param queueName the name of the queue to read from
@@ -229,8 +230,10 @@ object MultiReaderMemcache {
 
   /**
    * Helper for getting the right codec for the memcache protocol
+   *
    * @return the Kestrel codec
    */
+  @deprecated("Use `.stack(Kestrel.client)` on the configured com.twitter.finagle.builder.ClientBuilder instead", "2016-12-6")
   def codec = KestrelCodec()
 }
 
@@ -244,13 +247,13 @@ object MultiReaderMemcache {
  * Example with a custom client builder:
  * {{{
  *   val readHandle =
- *     MultiReaderThrift("/the/path", "the-queue")
+ *     MultiReaderThriftMux("/the/path", "the-queue")
  *       .clientBuilder(
  *         ClientBuilder()
- *           .codec(MultiReaderThrift.codec(ClientId("myClientName"))
- *           .requestTimeout(1.minute)
- *           .connectTimeout(1.minute)
- *           .hostConnectionLimit(1) /* etc... but do not set hosts or build */)
+ *           .stack(ThriftMux.client
+ *             .withClientId(ClientId("myClientName"))
+ *             .withSession.acquisitionTimeout(1.minute)
+ *             .withRequestTimeout(1.minute))
  *       .retryBackoffs(/* Stream[Duration], Timer; optional */)
  *       .build()
  * }}}
@@ -260,15 +263,86 @@ object MultiReaderMemcache {
  *   val name: com.twitter.finagle.Name = Resolver.eval(...)
  *   val va: Var[Addr] = name.bind()
  *   val readHandle =
- *     MultiReaderThrift(va, "the-queue", ClientId("myClientName"))
+ *     MultiReaderThriftMux(va, "the-queue", ClientId("myClientName"))
  *       .retryBackoffs(/* Stream[Duration], Timer; optional */)
  *       .build()
  * }}}
  */
+object MultiReaderThriftMux {
+  /**
+   * Create a new MultiReader which dispatches requests to `dest` using the thriftmux protocol.
+   *
+   * @param dest the name of the destination which requests are dispatched to.
+   *             See [[http://twitter.github.io/finagle/guide/Names.html Names]] for more detail.
+   * @param queueName the name of the queue to read from
+   * @param clientId the clientid to be used
+   */
+  def apply(dest: String, queueName: String, clientId: Option[ClientId]): MultiReaderBuilderThriftMux =
+    apply(Resolver.eval(dest), queueName, clientId)
+
+  /**
+   * Used to create a thriftmux based MultiReader with a ClientId when a custom
+   * client builder will not be used.  If a custom client builder will be
+   * used then it is more reasonable to use the version of apply that does
+   * not take a ClientId or else the client id will need to be passed to
+   * both apply and the codec in clientBuilder.
+   *
+   * @param dest a [[com.twitter.finagle.Name]] representing the Kestrel
+   * endpoints to connect to
+   * @param queueName the name of the queue to read from
+   * @param clientId the clientid to be used
+   *
+   * @return A MultiReaderBuilderThriftMux
+   */
+  def apply(dest: Name, queueName: String, clientId: Option[ClientId]): MultiReaderBuilderThriftMux = {
+    dest match {
+      case Name.Bound(va) => apply(va, queueName, clientId)
+      case Name.Path(path) => apply(Namer.resolve(path), queueName, clientId)
+    }
+  }
+
+  /**
+   * Used to create a thriftmux based MultiReader with a ClientId when a custom
+   * client builder will not be used.  If a custom client builder will be
+   * used then it is more reasonable to use the version of apply that does
+   * not take a ClientId or else the client id will need to be passed to
+   * both apply and the codec in clientBuilder.
+   *
+   * @param va endpoints for Kestrel
+   * @param queueName the name of the queue to read from
+   * @param clientId the clientid to be used
+   *
+   * @return A MultiReaderBuilderThriftMux
+   */
+  def apply(
+    va: Var[Addr],
+    queueName: String,
+    clientId: Option[ClientId]
+  ): MultiReaderBuilderThriftMux = {
+    val config = MultiReaderConfig[ThriftClientRequest, Array[Byte]](va, queueName, clientId)
+    new MultiReaderBuilderThriftMux(config)
+  }
+
+  /**
+   * Used to create a thriftmux based MultiReader when a ClientId will neither
+   * not be provided or will be provided to the codec was part of creating
+   * a custom client builder.
+   * This is provided as a separate method for Java compatability.
+   *
+   * @param va endpoints for Kestrel
+   * @param queueName the name of the queue to read from
+   *
+   * @return A MultiReaderBuilderThriftMux
+   */
+  def apply(va: Var[Addr], queueName: String): MultiReaderBuilderThriftMux = {
+    this(va, queueName, None)
+  }
+}
+
 object MultiReaderThrift {
   /**
    * Create a new MultiReader which dispatches requests to `dest` using the thrift protocol.
-   * 
+   *
    * @param dest the name of the destination which requests are dispatched to.
    *             See [[http://twitter.github.io/finagle/guide/Names.html Names]] for more detail.
    * @param queueName the name of the queue to read from
@@ -288,10 +362,12 @@ object MultiReaderThrift {
    * used then it is more reasonable to use the version of apply that does
    * not take a ClientId or else the client id will need to be passed to
    * both apply and the codec in clientBuilder.
+   *
    * @param dest a [[com.twitter.finagle.Name]] representing the Kestrel
    * endpoints to connect to
    * @param queueName the name of the queue to read from
    * @param clientId the clientid to be used
+   *
    * @return A MultiReaderBuilderThrift
    */
   def apply(dest: Name, queueName: String, clientId: Option[ClientId]): MultiReaderBuilderThrift = {
@@ -307,9 +383,11 @@ object MultiReaderThrift {
    * used then it is more reasonable to use the version of apply that does
    * not take a ClientId or else the client id will need to be passed to
    * both apply and the codec in clientBuilder.
+   *
    * @param va endpoints for Kestrel
    * @param queueName the name of the queue to read from
    * @param clientId the clientid to be used
+   *
    * @return A MultiReaderBuilderThrift
    */
   def apply(
@@ -326,19 +404,15 @@ object MultiReaderThrift {
    * not be provided or will be provided to the codec was part of creating
    * a custom client builder.
    * This is provided as a separate method for Java compatability.
+   *
    * @param va endpoints for Kestrel
    * @param queueName the name of the queue to read from
+   *
    * @return A MultiReaderBuilderThrift
    */
   def apply(va: Var[Addr], queueName: String): MultiReaderBuilderThrift = {
-    this(va,queueName, None)
+    this(va, queueName, None)
   }
-
-  /**
-   * Helper for getting the right codec for the thrift protocol
-   * @return the ThriftClientFramedCodec codec
-   */
-  def codec(clientId: ClientId): ThriftClientFramedCodecFactory = ThriftClientFramedCodec(Some(clientId))
 }
 
 /**
@@ -355,16 +429,16 @@ object MultiReaderThrift {
  *   val readHandle =
  *     MultiReader(va, "the-queue")
  *       .clientBuilder(
- *         ClientBuilder()
- *           .codec(Kestrel())
- *           .requestTimeout(1.minute)
- *           .connectTimeout(1.minute)
- *           .hostConnectionLimit(1) /* etc... but do not set hosts or build */)
+ *         ClientBuilder()      /* etc... but do not set hosts or build */
+ *           .stack(Kestrel.client
+ *             .withSession.acquisitionTimeout(1.minute)
+ *             .withRequestTimeout(1.minute)
+ *             .withSessionPool.maxSize(1)))
  *       .retryBackoffs(/* Stream[Duration], Timer; optional */)
  *       .build()
  * }}}
  */
-@deprecated("Use MultiReaderMemcache or MultiReaderThrift instead", "6.15.1")
+@deprecated("Use MultiReaderMemcache or MultiReaderThriftMux instead", "6.15.1")
 object MultiReader {
   /**
    * Create a Kestrel memcache protocol based builder
@@ -514,6 +588,7 @@ abstract class MultiReaderBuilder[Req, Rep, Builder] private[kestrel](
    *
    * @param trackOutstandingRequests
    *          flag to track outstanding requests.
+   *
    * @return multi reader builder
    */
   def trackOutstandingRequests(trackOutstandingRequests: Boolean): Builder =
@@ -524,6 +599,7 @@ abstract class MultiReaderBuilder[Req, Rep, Builder] private[kestrel](
    *
    * @param statsReceiver
    *          stats receiver
+   *
    * @return multi reader builder
    */
   def statsReceiver(statsReceiver: StatsReceiver): Builder =
@@ -610,10 +686,9 @@ abstract class MultiReaderBuilderMemcacheBase[Builder] private[kestrel](
 
   protected[kestrel] def defaultClientBuilder: MemcacheClientBuilder =
     ClientBuilder()
-      .stack(Kestrel.client)
-      .connectTimeout(1.minute)
-      .requestTimeout(1.minute)
-      .daemon(true)
+      .stack(Kestrel.client
+        .withSession.acquisitionTimeout(1.minute)
+        .withRequestTimeout(1.minute))
 
   protected[kestrel] def createClient(factory: ServiceFactory[Command, Response]): Client =
     Client(factory)
@@ -651,27 +726,33 @@ class MultiReaderBuilderMemcache private[kestrel](config: MultiReaderConfig[Comm
     new MultiReaderBuilderMemcache(config)
 }
 
+
+
 /**
  * Factory for [[com.twitter.finagle.kestrel.ReadHandle]] instances using
- * Kestrel's thrift protocol.
+ * Kestrel's thriftmux protocol.
  */
-class MultiReaderBuilderThrift private[kestrel](
+class MultiReaderBuilderThriftMux private[kestrel](
     config: MultiReaderConfig[ThriftClientRequest, Array[Byte]])
-  extends MultiReaderBuilder[ThriftClientRequest, Array[Byte], MultiReaderBuilderThrift](config) {
-  type ThriftClientBuilder =
+  extends MultiReaderBuilder[ThriftClientRequest, Array[Byte], MultiReaderBuilderThriftMux](config) {
+  type ThriftMuxClientBuilder =
     ClientBuilder[ThriftClientRequest, Array[Byte], Nothing, ClientConfig.Yes, ClientConfig.Yes]
 
   protected[kestrel] def copy(
-      config: MultiReaderConfig[ThriftClientRequest, Array[Byte]]): MultiReaderBuilderThrift =
-    new MultiReaderBuilderThrift(config)
+      config: MultiReaderConfig[ThriftClientRequest, Array[Byte]]): MultiReaderBuilderThriftMux =
+    new MultiReaderBuilderThriftMux(config)
 
-  protected[kestrel] def defaultClientBuilder: ThriftClientBuilder =
+  protected[kestrel] def defaultClientBuilder: ThriftMuxClientBuilder = {
+    val stackClient = config.clientId match {
+      case Some(id) => ThriftMux.client.withClientId(id)
+      case None => ThriftMux.client
+    }
+
     ClientBuilder()
-      .codec(ThriftClientFramedCodec(config.clientId))
-      .connectTimeout(1.minute)
-      .requestTimeout(1.minute)
-      .hostConnectionLimit(1)
-      .daemon(true)
+      .stack(stackClient
+        .withSession.acquisitionTimeout(1.minute)
+        .withRequestTimeout(1.minute))
+  }
 
   protected[kestrel] def createClient(
       factory: ServiceFactory[ThriftClientRequest, Array[Byte]]): Client =
@@ -685,3 +766,41 @@ class MultiReaderBuilderThrift private[kestrel](
     withConfig(_.copy(_txnAbortTimeout = txnAbortTimeout))
 }
 
+/**
+ * Factory for [[com.twitter.finagle.kestrel.ReadHandle]] instances using
+ * Kestrel's thriftmux protocol.
+ */
+class MultiReaderBuilderThrift private[kestrel](
+  config: MultiReaderConfig[ThriftClientRequest, Array[Byte]])
+  extends MultiReaderBuilder[ThriftClientRequest, Array[Byte], MultiReaderBuilderThrift](config) {
+  type ThriftClientBuilder =
+    ClientBuilder[ThriftClientRequest, Array[Byte], Nothing, ClientConfig.Yes, ClientConfig.Yes]
+
+  protected[kestrel] def copy(
+    config: MultiReaderConfig[ThriftClientRequest, Array[Byte]]): MultiReaderBuilderThrift =
+    new MultiReaderBuilderThrift(config)
+
+  protected[kestrel] def defaultClientBuilder: ThriftClientBuilder = {
+    val stackClient = config.clientId match {
+      case Some(id) => Thrift.client.withClientId(id)
+      case None => Thrift.client
+    }
+
+    ClientBuilder()
+      .stack(stackClient
+        .withSession.acquisitionTimeout(1.minute)
+        .withRequestTimeout(1.minute)
+        .withSessionPool.maxSize(1))
+  }
+
+  protected[kestrel] def createClient(
+      factory: ServiceFactory[ThriftClientRequest, Array[Byte]]): Client =
+    Client.makeThrift(factory, config.txnAbortTimeout)
+
+  /**
+   * While reading items, an open transaction will be auto aborted if not confirmed by the client within the specified
+   * timeout.
+   */
+  def txnAbortTimeout(txnAbortTimeout: Duration) =
+    withConfig(_.copy(_txnAbortTimeout = txnAbortTimeout))
+}

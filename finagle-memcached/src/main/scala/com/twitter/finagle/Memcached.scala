@@ -5,22 +5,27 @@ import com.twitter.concurrent.Broker
 import com.twitter.conversions.time._
 import com.twitter.finagle
 import com.twitter.finagle.client.{ClientRegistry, DefaultPool, StackClient, StdStackClient, Transporter}
-import com.twitter.finagle.dispatch.{GenSerialClientDispatcher, SerialServerDispatcher, PipeliningDispatcher}
+import com.twitter.finagle.dispatch.{GenSerialClientDispatcher, PipeliningDispatcher, SerialServerDispatcher}
 import com.twitter.finagle.loadbalancer.{Balancers, ConcurrentLoadBalancerFactory, LoadBalancerFactory}
 import com.twitter.finagle.memcached._
+import com.twitter.finagle.memcached.Toggles
 import com.twitter.finagle.memcached.exp.LocalMemcached
+import com.twitter.finagle.memcached.protocol.text.CommandToEncoding
 import com.twitter.finagle.memcached.protocol.text.client.ClientTransport
 import com.twitter.finagle.memcached.protocol.text.server.ServerTransport
-import com.twitter.finagle.memcached.protocol.text.transport.{Netty4ServerFramer, Netty4ClientFramer, Netty3ClientFramer, Netty3ServerFramer}
+import com.twitter.finagle.memcached.protocol.text.client.DecodingToResponse
+import com.twitter.finagle.memcached.protocol.text.transport.{Netty3ClientFramer, Netty3ServerFramer, Netty4ClientFramer, Netty4ServerFramer}
 import com.twitter.finagle.memcached.protocol.{Command, Response, RetrievalCommand, Values}
 import com.twitter.finagle.netty3.{Netty3Listener, Netty3Transporter}
-import com.twitter.finagle.netty4.{Netty4Transporter, Netty4Listener}
-import com.twitter.finagle.param.{Monitor => _, ResponseClassifier => _, ExceptionStatsHandler => _, Tracer => _, _}
+import com.twitter.finagle.netty4.{Netty4Listener, Netty4Transporter}
+import com.twitter.finagle.param.{ExceptionStatsHandler => _, Monitor => _, ResponseClassifier => _, Tracer => _, _}
 import com.twitter.finagle.pool.SingletonPool
 import com.twitter.finagle.server.{Listener, StackServer, StdStackServer}
 import com.twitter.finagle.service._
 import com.twitter.finagle.service.exp.FailureAccrualPolicy
-import com.twitter.finagle.stats.{StatsReceiver, ExceptionStatsHandler}
+import com.twitter.finagle.stats.{ExceptionStatsHandler, StatsReceiver}
+import com.twitter.finagle.server.ServerInfo
+import com.twitter.finagle.toggle.Toggle
 import com.twitter.finagle.tracing._
 import com.twitter.finagle.transport.Transport
 import com.twitter.finagle.util.DefaultTimer
@@ -29,6 +34,7 @@ import com.twitter.io.Buf
 import com.twitter.util.{Closable, Duration, Monitor}
 import com.twitter.util.registry.GlobalRegistry
 import scala.collection.mutable
+import scala.util.hashing.MurmurHash3
 
 private[finagle] object MemcachedTracingFilter {
 
@@ -187,7 +193,16 @@ object Memcached extends finagle.Client[Command, Response]
         params => Netty4Transporter[Buf, Buf](Netty4ClientFramer, params),
         params => Netty4Listener[Buf, Buf](Netty4ServerFramer, params))
 
-      implicit val param = Stack.Param(Netty3)
+      private[this] val UseNetty4ToggleId: String =
+        "com.twitter.finagle.memcached.UseNetty4"
+
+      private[this] val netty4Toggle: Toggle[Int] = Toggles(UseNetty4ToggleId)
+      private[this] def useNetty4: Boolean = netty4Toggle(MurmurHash3.stringHash(ServerInfo().id))
+
+      implicit val param: Stack.Param[MemcachedImpl] = Stack.Param(
+        if (useNetty4) Netty4
+        else Netty3
+      )
     }
 
     case class NumReps(reps: Int) {
@@ -277,7 +292,10 @@ object Memcached extends finagle.Client[Command, Response]
 
     protected def newDispatcher(transport: Transport[In, Out]): Service[Command, Response] =
       new PipeliningDispatcher(
-        new ClientTransport(transport),
+        new ClientTransport[Command, Response](
+          new CommandToEncoding,
+          new DecodingToResponse,
+          transport),
         params[finagle.param.Stats].statsReceiver.scope(GenSerialClientDispatcher.StatsScope),
         DefaultTimer.twitter
       )
@@ -299,7 +317,9 @@ object Memcached extends finagle.Client[Command, Response]
       val param.KeyHasher(hasher) = params[param.KeyHasher]
       val param.NumReps(numReps) = params[param.NumReps]
 
-      registerClient(label, hasher.toString, isPipelining = true)
+      val label0 = if (label == "") params[Label].label else label
+
+      registerClient(label0, hasher.toString, isPipelining = true)
 
       val healthBroker = new Broker[NodeHealth]
 
@@ -307,11 +327,11 @@ object Memcached extends finagle.Client[Command, Response]
         val key = KetamaClientKey.fromCacheNode(node)
         val stk = stack.replace(FailureAccrualFactory.role,
           KetamaFailureAccrualFactory.module[Command, Response](key, healthBroker))
-        withStack(stk).newService(mkDestination(node.host, node.port), label)
+        withStack(stk).newService(mkDestination(node.host, node.port), label0)
       }
 
       val group = CacheNodeGroup.fromVarAddr(va)
-      val scopedSr = sr.scope(label)
+      val scopedSr = sr.scope(label0)
       new KetamaPartitionedClient(group, newService, healthBroker, scopedSr, hasher, numReps)
         with TwemcachePartitionedClient
     }

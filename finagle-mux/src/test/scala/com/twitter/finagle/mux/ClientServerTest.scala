@@ -18,6 +18,7 @@ import org.mockito.invocation.InvocationOnMock
 import org.mockito.Matchers.any
 import org.mockito.Mockito.{never, verify, when}
 import org.mockito.stubbing.Answer
+import org.scalactic.source.Position
 import org.scalatest.concurrent.{Eventually, IntegrationPatience}
 import org.scalatest.junit.{AssertionsForJUnit, JUnitRunner}
 import org.scalatest.mock.MockitoSugar
@@ -86,7 +87,7 @@ private[mux] class ClientServerTest(canDispatch: Boolean)
   }
 
   // Push a tracer for the client.
-  override def test(testName: String, testTags: Tag*)(f: => Unit): Unit =
+  override def test(testName: String, testTags: Tag*)(f: => Any)(implicit pos: Position): Unit =
     super.test(testName, testTags:_*) {
       Trace.letTracer(tracer)(f)
     }
@@ -133,10 +134,10 @@ private[mux] class ClientServerTest(canDispatch: Boolean)
     for (i <- 0 until 5) {
       assert(nping.get == i)
       val pinged = session.ping()
-      assert(!pinged.isDone)
+      assert(!pinged.isDefined)
       pingRep.flip()
       Await.result(pinged, 30.seconds)
-      assert(pinged.isDone)
+      assert(Await.result(pinged.liftToTry, 5.seconds) == Return.Unit)
       assert(nping.get == i+1)
     }
   }
@@ -226,7 +227,7 @@ private[mux] class ClientServerTest(canDispatch: Boolean)
       client(Request(Path.empty, buf(1)))
     }
     assert(resp.poll.isDefined)
-    val Buf.Utf8(respStr) = Await.result(resp).body
+    val Buf.Utf8(respStr) = Await.result(resp, 5.seconds).body
     assert(respStr == id.toString)
   }
 
@@ -251,7 +252,7 @@ private[mux] class ClientServerTest(canDispatch: Boolean)
       p
     }
     assert(resp.poll.isDefined)
-    val respBr = BufReader(Await.result(resp).body)
+    val respBr = BufReader(Await.result(resp, 5.seconds).body)
     assert(respBr.remaining == 8)
     val respFlags = Flags(respBr.readLongBE())
     assert(respFlags == flags)
@@ -296,7 +297,7 @@ class ClientServerTestNoDispatch extends ClientServerTest(false) {
     val withoutDst = Request(Path.empty, buf(123))
     val rep = Response(buf(23))
     when(service(withoutDst)).thenReturn(Future.value(rep))
-    assert(Await.result(client(withDst)) == rep)
+    assert(Await.result(client(withDst), 5.seconds) == rep)
     verify(service)(withoutDst)
   }
 }
@@ -321,13 +322,13 @@ class ClientServerTestDispatch extends ClientServerTest(true) {
     )
 
     // No context set
-    assert(Await.result(client(Request(Path.empty, Buf.Empty))).body.isEmpty)
+    assert(Await.result(client(Request(Path.empty, Buf.Empty)), 5.seconds).body.isEmpty)
 
     val f = Contexts.broadcast.let(testContext, Buf.Utf8("My context!")) {
       client(Request.empty)
     }
 
-    assert(Await.result(f).body == Buf.Utf8("My context!"))
+    assert(Await.result(f, 5.seconds).body == Buf.Utf8("My context!"))
   }
 
   test("dispatches destinations") {
@@ -337,7 +338,7 @@ class ClientServerTestDispatch extends ClientServerTest(true) {
     val req = Request(Path.read("/dst/name"), buf(123))
     val rep = Response(buf(23))
     when(service(req)).thenReturn(Future.value(rep))
-    assert(Await.result(client(req)) == rep)
+    assert(Await.result(client(req), 5.seconds) == rep)
     verify(service)(req)
   }
 }

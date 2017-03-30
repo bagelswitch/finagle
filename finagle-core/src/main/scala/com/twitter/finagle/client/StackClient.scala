@@ -167,7 +167,7 @@ object StackClient {
      * client sessions. There is no specific position constraint but higher in the
      * stack is preferable so it can wrap more application logic.
      */
-    stk.push(MonitorFilter.module)
+    stk.push(MonitorFilter.clientModule)
 
     /**
      * `ExceptionSourceFilter` is the exception handler of last resort. It recovers
@@ -408,6 +408,7 @@ trait StackClient[Req, Rep] extends StackBasedClient[Req, Rep]
   def withParams(ps: Stack.Params): StackClient[Req, Rep]
   def configured[P: Stack.Param](p: P): StackClient[Req, Rep]
   def configured[P](psp: (P, Stack.Param[P])): StackClient[Req, Rep]
+  def configuredParams(params: Stack.Params): StackClient[Req, Rep]
 }
 
 /**
@@ -481,6 +482,13 @@ trait StdStackClient[Req, Rep, This <: StdStackClient[Req, Rep, This]]
   }
 
   /**
+   * Creates a new StackClient with additional parameters `newParams`.
+   */
+  override def configuredParams(newParams: Stack.Params): This = {
+    withParams(params ++ newParams)
+  }
+
+  /**
    * Creates a new StackClient with `params` used to configure this StackClient's `stack`.
    */
   def withParams(params: Stack.Params): This =
@@ -547,6 +555,13 @@ trait StdStackClient[Req, Rep, This <: StdStackClient[Req, Rep, This]]
       }
     }
 
+  /**
+   * @inheritdoc
+   *
+   * @param label0 if an empty String is provided, then the label
+   *               from the [[Label]] [[Stack.Params]] is used.
+   *               If that is also an empty String, then `dest` is used.
+   */
   def newClient(dest: Name, label0: String): ServiceFactory[Req, Rep] = {
     val Stats(stats) = params[Stats]
     val Label(label1) = params[Label]
@@ -554,9 +569,9 @@ trait StdStackClient[Req, Rep, This <: StdStackClient[Req, Rep, This]]
     // For historical reasons, we have two sources for identifying
     // a client. The most recently set `label0` takes precedence.
     val clientLabel = (label0, label1) match {
-      case ("", "") => Showable.show(dest)
-      case ("", l1) => l1
-      case (l0, l1) => l0
+      case (Label.Default, Label.Default) => Showable.show(dest)
+      case (Label.Default, l1) => l1
+      case _ => label0
     }
 
     val clientStack = stack ++ (endpointer +: nilStack)

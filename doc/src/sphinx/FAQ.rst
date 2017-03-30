@@ -80,14 +80,15 @@ You can disable this behavior by using the :API:`MaskCancelFilter <com.twitter.f
 Why is com.twitter.common.zookeeper#server-set not found?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Some of our libraries still aren't published to maven central. If you add
+Some of our libraries weren't published to maven central before finagle 6.39.0. If you add
 
 .. code-block:: scala
 
 	resolvers += "twitter" at "https://maven.twttr.com"
 
-to your sbt configuration, it will be able to pick up the libraries which are
-published externally, but not yet to maven central.
+to your sbt configuration, it will be able to pick up the libraries which were
+published externally, but weren't yet published to maven central.  Note that if you use
+finagle-thrift{,mux}, you will still need it for our patched libthrift.
 
 .. _configuring_finagle6:
 
@@ -184,6 +185,16 @@ the visibility into which endpoints are up.
 See :ref:`this example <disabling_fail_fast>` on how to disable `Fail Fast` for a given client.
 
 Refer to the :ref:`fail fast <client_fail_fast>` section for further context.
+
+What is a com.twitter.finagle.service.ResponseClassificationSyntheticException?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+While typically, a :src:`StatsFilter <com/twitter/finagle/service/StatsFilter.scala>` counts
+`Exceptions` as failures, a user may supply a
+`ResponseClassifier <http://twitter.github.io/finagle/guide/Clients.html#response-classification>`_
+that treats non-Exceptions as failures. In that case, while no exceptions have occurred, a
+`ResponseClassificationSyntheticException` is used as a "synthetic" exception for
+bookkeeping purposes.
 
 How long should my Clients live?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

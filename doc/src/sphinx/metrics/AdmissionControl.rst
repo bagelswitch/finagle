@@ -6,6 +6,11 @@ Deadline Admission Control
 **admission_control/deadline/exceeded**
   A counter of the number of requests whose deadline has expired.
 
+**admission_control/deadline/expired_ms**
+  A stat of the elapsed time since expiry if a deadline has expired, in
+  milliseconds.
+
+
 Nack Admission Control
 <<<<<<<<<<<<<<<<<<<<<<
 

@@ -1,7 +1,7 @@
 package com.twitter.finagle.http.filter
 
 import com.twitter.finagle._
-import com.twitter.finagle.http.{Response, Request, Status}
+import com.twitter.finagle.http.{Method, Request, Response, Status}
 import com.twitter.finagle.stats.StatsReceiver
 import com.twitter.finagle.service.RetryPolicy
 import com.twitter.io.Buf
@@ -25,7 +25,9 @@ private[finagle] object HttpNackFilter {
   val ResponseStatus: Status = Status.ServiceUnavailable
 
   private val RetryableNackBody = Buf.Utf8("Request was not processed by the server due to an error and is safe to retry")
-  private val NonretryableNackBody = Buf.Utf8("Request was not processed by the server and should not be retried")
+  private val NonRetryableNackBody = Buf.Utf8("Request was not processed by the server and should not be retried")
+
+  private val NonRetryableNackFlags = Failure.Rejected|Failure.NonRetryable
 
   def isRetryableNack(rep: Response): Boolean =
     rep.status == ResponseStatus && rep.headerMap.contains(RetryableNackHeader)
@@ -35,12 +37,15 @@ private[finagle] object HttpNackFilter {
 
   def module: Stackable[ServiceFactory[Request, Response]] =
     new Stack.Module1[param.Stats,ServiceFactory[Request, Response]] {
-      val role = HttpNackFilter.role
+      val role: Stack.Role = HttpNackFilter.role
       val description = "Convert rejected requests to 503s, respecting retryability"
 
-      def make(_stats: param.Stats, next: ServiceFactory[Request, Response]) = {
+      def make(
+        _stats: param.Stats,
+        next: ServiceFactory[Request, Response]
+      ): ServiceFactory[Request, Response] = {
         val param.Stats(stats) = _stats
-        (new HttpNackFilter(stats)).andThen(next)
+        new HttpNackFilter(stats).andThen(next)
       }
     }
 }
@@ -52,23 +57,34 @@ private[finagle] class HttpNackFilter(statsReceiver: StatsReceiver)
   private[this] val nackCounts = statsReceiver.counter("nacks")
   private[this] val nonretryableNackCounts = statsReceiver.counter("nonretryable_nacks")
 
-  private[this] val handler: PartialFunction[Throwable, Response] = {
+  private[this] val standardHandler = makeHandler(true)
+  private[this] val bodylessHandler = makeHandler(false)
+
+  private[this] def makeHandler(includeBody: Boolean): PartialFunction[Throwable, Response] = {
     case RetryPolicy.RetryableWriteException(_) =>
       nackCounts.incr()
       val rep = Response(ResponseStatus)
       rep.headerMap.set(RetryableNackHeader, "true")
-      rep.content = RetryableNackBody
+      if (includeBody) {
+        rep.content = RetryableNackBody
+      }
       rep
 
-    case f: Failure if f.isFlagged(Failure.Rejected) && !f.isFlagged(Failure.Restartable) =>
+    case f: Failure if f.isFlagged(NonRetryableNackFlags) =>
       nonretryableNackCounts.incr()
       val rep = Response(ResponseStatus)
       rep.headerMap.set(NonRetryableNackHeader, "true")
-      rep.content = NonretryableNackBody
+      if (includeBody) {
+        rep.content = NonRetryableNackBody
+      }
       rep
   }
 
   def apply(request: Request, service: Service[Request, Response]): Future[Response] = {
+    val handler =
+      if (request.method == Method.Head) bodylessHandler
+      else standardHandler
+
     service(request).handle(handler)
   }
 }

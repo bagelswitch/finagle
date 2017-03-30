@@ -1,5 +1,8 @@
 package com.twitter.finagle
 
+import com.twitter.finagle.stats.DefaultStatsReceiver
+import com.twitter.finagle.toggle.{StandardToggleMap, ToggleMap}
+
 /**
  * =Deprecation=
  *
@@ -9,10 +12,10 @@ package com.twitter.finagle
  * ==Thrift codecs==
  *
  * We provide client and server protocol support for the framed protocol.
- * The public implementations are:
+ * The public implementations are defined on the Thrift object:
  *
- *  - [[com.twitter.finagle.thrift.ThriftClientFramedCodec]]
- *  - [[com.twitter.finagle.thrift.ThriftServerFramedCodec]]
+ *  - [[com.twitter.finagle.Thrift.client]]
+ *  - [[com.twitter.finagle.Thrift.server]]
  *
  * The type of the server codec is `Service[Array[Byte], Array[Byte]]`
  * and the client codecs are `Service[ThriftClientRequest,
@@ -20,14 +23,14 @@ package com.twitter.finagle
  * thrift messages (requests and replies) according to the protocol
  * chosen. This is why the client codecs need to have access to a
  * thrift `ProtocolFactory`.
-
+ *
  * These transports are used by the services produced by the
  * [[https://github.com/mariusaeriksen/thrift-0.5.0-finagle finagle thrift codegenerator]].
  *
  * {{{
  * val service: Service[ThriftClientRequest, Array[Byte]] = ClientBuilder()
  *   .hosts("foobar.com:123")
- *   .codec(ThriftClientFramedCodec())
+ *   .stack(Thrift.client)
  *   .build()
  *
  * // Wrap the raw Thrift transport in a Client decorator. The client
@@ -40,4 +43,17 @@ package com.twitter.finagle
  * class `ServiceToClient` is provided by the finagle thrift code
  * generator.
  */
-package object thrift
+package object thrift {
+
+  /**
+   * The name of the finagle-thrift [[ToggleMap]].
+   */
+  private[this] val LibraryName: String = "com.twitter.finagle.thrift"
+
+  /**
+   * The [[ToggleMap]] used for finagle-thrift.
+   */
+  private[finagle] val Toggles: ToggleMap =
+    StandardToggleMap(LibraryName, DefaultStatsReceiver)
+}
+

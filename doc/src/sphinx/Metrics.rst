@@ -104,6 +104,16 @@ These client stats help you keep track of connection churn.
 
 .. include:: metrics/Pooling.rst
 
+PendingRequestFilter
+--------------------
+
+.. _pending_request_filter:
+
+These stats represent information about the behavior of PendingRequestFilter.
+
+**pending_requests/rejected**
+  a counter of the number of requests that have been rejected by this filter.
+
 Retries
 -------
 
@@ -189,11 +199,38 @@ These stats pertain to the HTTP protocol.
 
 **nacks**
   A counter of the number of retryable HTTP 503 responses the Http server returns. Those
-  responses are automatically retried by Finagle Http client.
+  responses are automatically retried by Finagle HTTP client.
 
 **nonretryable_nacks**
-  A counter of the number of non-retryable HTTP 503 responses the Http server returns. Those
+  A counter of the number of non-retryable HTTP 503 responses the HTTP server returns. Those
   responses are not automatically retried.
+
+These metrics are added by
+:src:`StatsFilter <com/twitter/finagle/http/filter/StatsFilter.scala>` and can be enabled by
+using `.withHttpStats` on `Http.Client` and `Http.Server`.
+
+**status/<statusCode>**
+  A counter of the number of responses received, or returned for servers, that had this
+  statusCode.
+
+**status/<statusClass>**
+  Same as **status/statusCode** but aggregated per category, e.g. all 500 range responses
+  count as 5XX for this counter.
+
+**time/<statusCode>**
+  A histogram on duration in milliseconds per HTTP status code.
+
+**time/<statusCategory>**
+  A histogram on duration in milliseconds per HTTP status code category.
+
+Memcached
+---------
+
+.. _memcached_stats:
+
+These stats pertain to the Memcached protocol.
+
+.. include:: metrics/Memcached.rst
 
 Mux
 ---

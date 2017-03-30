@@ -2,10 +2,11 @@ package com.twitter.finagle.exception
 
 import com.twitter.app.GlobalFlag
 import com.twitter.conversions.time._
+import com.twitter.finagle.Thrift
 import com.twitter.finagle.builder.ClientBuilder
 import com.twitter.finagle.exception.thriftscala.{LogEntry, ResultCode, Scribe, Scribe$FinagleClient}
 import com.twitter.finagle.stats.{ClientStatsReceiver, NullStatsReceiver, StatsReceiver}
-import com.twitter.finagle.thrift.{Protocols, ThriftClientFramedCodec}
+import com.twitter.finagle.thrift.Protocols
 import com.twitter.finagle.tracing.Trace
 import com.twitter.finagle.util.ReporterFactory
 import com.twitter.util.{Future, GZIPStringEncoder, Monitor, NullMonitor, Time}
@@ -93,12 +94,11 @@ object Reporter {
     val service = ClientBuilder() // these are from the zipkin tracer
       .name("exception_reporter")
       .hosts(new InetSocketAddress(scribeHost, scribePort))
-      .codec(ThriftClientFramedCodec())
+      .stack(Thrift.client
+        // somewhat arbitrary, but bounded timeouts
+        .withSessionPool.maxWaiters(250))
       .reportTo(ClientStatsReceiver)
       .hostConnectionLimit(5)
-      // using an arbitrary, but bounded number of waiters to avoid memory leaks
-      .hostConnectionMaxWaiters(250)
-      // somewhat arbitrary, but bounded timeouts
       .timeout(1.second)
       .daemon(true)
       .build()
@@ -157,8 +157,8 @@ sealed case class Reporter(
   def createEntry(e: Throwable): LogEntry = {
     var se = new ServiceException(serviceName, e, Time.now, Trace.id.traceId.toLong)
 
-    sourceAddress foreach { sa => se = se withSource sa }
-    clientAddress foreach { ca => se = se withClient ca }
+    sourceAddress.foreach { sa => se = se.withSource(sa) }
+    clientAddress.foreach { ca => se = se.withClient(ca) }
 
     LogEntry(Reporter.scribeCategory, GZIPStringEncoder.encodeString(se.toJson))
   }
@@ -170,11 +170,12 @@ sealed case class Reporter(
    * implications.
    */
   def handle(t: Throwable): Boolean = {
-    client.log(createEntry(t) :: Nil) onSuccess {
+    client.log(createEntry(t) :: Nil).onSuccess {
       case ResultCode.Ok => okCounter.incr()
       case ResultCode.TryLater => tryLaterCounter.incr()
-    } onFailure {
-      case e => statsReceiver.counter("report_exception_" + e.toString).incr()
+      case ResultCode.EnumUnknownResultCode(_) => // ignored
+    }.onFailure {
+      e => statsReceiver.counter("report_exception_" + e.toString).incr()
     }
 
     false  // did not actually handle

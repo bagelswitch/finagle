@@ -39,7 +39,9 @@ class ConnectionManagerTest extends FunSuite with MockitoSugar {
     val manager = new ConnectionManager()
     manager.observeRequest(makeRequest(Version.Http11), Future.Done)
     assert(!manager.shouldClose())
-    manager.observeResponse(makeResponse(Version.Http11, Fields.ContentLength -> "1"), Future.Done)
+    val rep = makeResponse(Version.Http11, Fields.ContentLength -> "1")
+    manager.observeResponse(rep, Future.Done)
+    assert(rep.headerMap.get(Fields.Connection) != Some("close"))
     assert(!manager.shouldClose())
   }
 
@@ -47,15 +49,39 @@ class ConnectionManagerTest extends FunSuite with MockitoSugar {
     val manager = new ConnectionManager()
     manager.observeRequest(makeRequest(Version.Http11), Future.Done)
     assert(!manager.shouldClose())
-    manager.observeResponse(makeResponse(Version.Http11), Future.Done)
+    val rep = makeResponse(Version.Http11)
+    manager.observeResponse(rep, Future.Done)
     assert(manager.shouldClose())
+    assert(rep.headerMap.get(Fields.Connection) == Some("close"))
   }
 
   test("terminate when request has Connection: close") {
     val manager = new ConnectionManager()
     manager.observeRequest(makeRequest(Version.Http11, "Connection" -> "close"), Future.Done)
     assert(!manager.shouldClose())
-    manager.observeResponse(makeResponse(Version.Http11, Fields.ContentLength -> "1"), Future.Done)
+    val rep = makeResponse(Version.Http11, Fields.ContentLength -> "1")
+    manager.observeResponse(rep, Future.Done)
+    assert(manager.shouldClose())
+    // the header is copied to the response
+    assert(rep.headerMap.get(Fields.Connection) == Some("close"))
+  }
+
+  test("terminate after streaming request has Connection: close") {
+    val manager = new ConnectionManager()
+
+    val req = makeRequest(Version.Http11, "Connection" -> "close")
+    req.setChunked(true)
+    val reqP = new Promise[Unit]
+    manager.observeRequest(req, reqP)
+    reqP.setDone()
+    assert(!manager.shouldClose())
+
+    val rep = makeResponse(Version.Http11, "Connection" -> "close")
+    rep.setChunked(true)
+    val repP = new Promise[Unit]
+    manager.observeResponse(rep, repP)
+    assert(!manager.shouldClose())
+    repP.setDone()
     assert(manager.shouldClose())
   }
 
@@ -83,6 +109,18 @@ class ConnectionManagerTest extends FunSuite with MockitoSugar {
     assert(!manager.shouldClose())
     p.setDone()
     assert(manager.shouldClose())
+  }
+
+  test("terminate http/1.0 after response") {
+    val manager = new ConnectionManager()
+
+    manager.observeRequest(makeRequest(Version.Http10), Future.Done)
+    assert(!manager.shouldClose())
+
+    val rep = makeResponse(Version.Http10)
+    manager.observeResponse(rep, Future.Unit)
+    assert(manager.shouldClose())
+    assert(rep.headerMap.get(Fields.Connection) == Some("close"))
   }
 
   // these tests are sophisticated, and use things that ConnectionManager
@@ -152,4 +190,5 @@ class ConnectionManagerTest extends FunSuite with MockitoSugar {
       true
     )
   }
+
 }

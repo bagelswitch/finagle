@@ -1,5 +1,7 @@
 package com.twitter.finagle.mysql
 
+import com.twitter.finagle.Mysql
+import com.twitter.finagle.mysql.transport.TransportImpl
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
 import org.scalatest.{MustMatchers, FunSuite}
@@ -30,5 +32,11 @@ class ClientTest extends FunSuite with MockitoSugar with MustMatchers {
     verify(client, times(2)).query(sqlQuery)
     verify(factory, times(2)).apply()
     verify(factory, times(0)).close(any[Time])
+  }
+
+  test("Client uses Netty3 by default, but can be toggled to netty4") {
+    val params = Mysql.client.params
+
+    assert(params[TransportImpl].transporter(params).toString.equals("Netty3Transporter"))
   }
 }

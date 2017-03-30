@@ -7,6 +7,354 @@ Note that ``RB_ID=#`` correspond to associated messages in commits.
 6.x
 -----
 
+6.41.0
+------
+
+New Features
+~~~~~~~~~~~~
+
+  * finagle-core: Added stat "pending_requests/rejected" for the number of requests
+    rejected by `c.t.f.PendingRequestFilter`. ``RB_ID=898184``
+
+Breaking API Changes
+~~~~~~~~~~~~~~~~~~~~
+
+  * finagle-core:  Remove the `Filter#andThen(Req1 => Future[Rep1]): Req2 => Future[Rep2]`
+    method.  This overload is no longer usable in scala 2.12, because `Service`
+    is a SAM.  Because of the order in which SAMs get resolved, literal
+    functions in scala will get confused about which method they should use.
+    Instead of passing a Function directly, wrap the Function with a Service.mk.
+    ``RB_ID=896524``.
+
+  * finagle-core: `CancelledWriteException` was removed as it is no longer used.
+  ``RB_ID=896757``
+
+  * finagle-kestrel: The `codec` method has been removed from the kestrel
+    MultiReader object. Configure a ClientBuilder protocol using the default
+    thrift StackClient, Thrift.client, via the `stack` method of ClientBuilder.
+    ``RB_ID=894297``
+
+Runtime Behavior Changes
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+  * finagle-core: `c.t.f.builder.ClientBuilder` remove deprecated methods.
+    The same functionality is available through the Stack-based APIs or
+    `ClientBuilder.configured`, with the exception of `channelFactory`, which
+    has no analog because it exposes a Netty 3 API. ``RB_ID=893147``
+
+      - `channelFactory`
+      - `expHostConnectionBufferSize`
+      - `hostConnectionIdleTime`
+      - `hostConnectionMaxIdleTime`
+      - `hostConnectionMaxLifeTime`
+      - `hostConnectionMaxWaiters`
+      - `readerIdleTimeout`
+      - `recvBufferSize`
+      - `sendBufferSize`
+      - `writerIdleTimeout`
+
+  * finagle-core: Lower logging level used in `c.t.f.util.DefaultMonitor` for expected
+    exceptions: `CancelledRequestException`, `TooManyWaitersException`,
+    `CancelledConnectionException`, `FailedFastException`. ``RB_ID=895702``
+
+  * finagle-core: `c.t.f.util.DefaultMonitor` now logs most exceptions at
+    `WARNING` level instead of `FATAL`. ``RB_ID=895983``
+
+  * finagle-core: `c.t.f.util.DefaultMonitor` works harder to find the appropriate
+    log level by walking the exception's causes to find `c.t.util.TimeoutExceptions`
+    and `c.t.logging.HasLogLevel`. ``RB_ID=896695``
+
+  * finagle-core: The `c.t.f.service.Retries` module will now flag a response as
+    `NonRetryable` if either the retry limit is reached or the retry budget is exhausted.
+    ``RB_ID=897800``
+
+  * finagle-mdns: Uses only one implementation backed by jmdns instead of trying
+    to use a platform specific implementation of DDNS if present. ``RB_ID=897917``
+
+  * finagle-netty4: Client initiated TLS/SSL session renegotiations are now rejected
+    by default. ``RB_ID=895871``
+
+  * finagle-netty4: `ChannelTransport` no longer interrupts netty write operations
+    in order to temporarily unblock rollout of netty4. This reverts netty4 back
+    to netty3 semantics for writes. ``RB_ID=896757``
+
+Deprecations
+~~~~~~~~~~~~
+
+  * finagle-kestrel: Deprecate the `codec` method on `c.t.f.kestrel.MultiReaderMemcache`.
+    Use `.stack(Kestrel.client)` on the configured `c.t.f.builder.ClientBuilder` instead.
+    ``RB_ID=895989``
+
+6.40.0
+------
+
+New Features
+~~~~~~~~~~~~
+
+  * finagle: Most libraries (excluding finagle-thrift{,mux}) no longer need to
+    add an additional resolver that points to maven.twttr.com. ``RB_ID=878967``
+
+  * finagle: Introducing a new Finagle module `finagle-base-http` that provides
+    a common ground for both Netty 3 (`finagle-http`) and Netty 4 (`finagle-netty4-http`)
+    HTTP implementations. Netty 3 is still a default transport used in Finagle's
+    `Http.client` and `Http.server`. ```RB_ID=884614``
+
+  * finagle-core: Introduce the `c.t.f.client.DynamicTimeout` module allowing clients
+    to specify call-site specific timeouts. ``RB_ID=885005``
+
+  * finagle-core: A new module, `c.t.f.service.DeadlineFilter`, can be added to stack-based servers
+    and clients, which rejects requests with expired deadlines ``RB_ID=895820``
+
+  * finagle-memcached: Introduce `c.t.f.memcached.CasResult.replaced: Boolean`
+    to help transition usage off of the deprecated `cas` client method to
+    `checkAndSet`. ``RB_ID=891628``
+
+  * finagle-thrift: We now depend on a fork of libthrift hosted in the Central Repository.
+    The new package lives in the 'com.twitter' organization. This removes the necessity of
+    depending on maven.twttr.com. This also means that eviction will not be automatic and
+    using a newer libthrift library requires manual eviction if artifacts are being pulled
+    in transitively. ``RB_ID=885879``
+
+Runtime Behavior Changes
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+  * finagle-core: `Monitor` logging is improved in Finagle. ``RB_ID=878890``
+
+    - All exceptions caught in the stack are now logged by Finagle's `DefaultMonitor`
+      (previously Util's `RootMonitor`) such that Twitter's logging
+      framework is used instead of JDK logging.
+
+    - `DefaultMonitor` is now installed implicitly such that it will be composed
+      (via `orElse`) with the monitor passed by a user through the stack param.
+      The logic behind this compostion is quite straightforward: exceptions that
+      are't handled by a user-defined monitor propagated to the default monitor.
+
+    - `DefaultMonitor` now logs upstream socket address, downstream socket address,
+      and a client/server label if those are available.
+
+    - `RootMonitor` is still used to handle fatal exceptions from pending side-effect-only
+      closures (i.e., `onFailure`, `onSuccess`) on a service future/promise.
+
+  * finagle-core: `c.t.f.service.DeadlineStatsFilter` has been removed from the
+    server stack, along with all related stats.
+    The "admission_control/deadline/transit_latency_ms" stat has been moved to
+    `c.t.f.filter.ServerStatsFilter` and re-scoped as "transit_latency_ms"
+    ``RB_ID=895820``
+
+  * finagle-mux: `com.twitter.finagle.Failures` are now sent over the wire with
+    their flags intact via `com.twitter.finagle.mux.transport.MuxFailure` in the
+    previously unused Rdispatch context. This allows for greater signaling along
+    a chain of services. See the "MuxFailure Flags" section of the mux protocol
+    spec in finagle-mux/src/main/scala/c/t/f/mux/package.scala ``RB_ID=882431``
+
+  * finagle-netty4: The netty4 listener + transporter no longer manage direct byte
+    buffers by default. c.t.f.netty4.channel.DirectToHeapInboundHandler is introduced
+    to help protocol builders manage them. ``RB_ID=881648``
+
+  * finagle-stats: Changed the default behavior of empty histograms to only export
+    the count. Thus the `com.twitter.finagle.stats.exportEmptyHistograms` toggle
+    now defaults to `0.0`. ``RB_ID=882522``
+
+Breaking API Changes
+~~~~~~~~~~~~~~~~~~~~
+
+  * finagle: Some APIs around configuring TLS/SSL on Finagle clients have changed to
+    unblock Netty 4 adoption. ``RB_ID=890935``
+
+    - `c.t.f.Http.client.withTls(Netty3TransporterTLSConfig)` is removed. Use
+      variations of `c.t.f.Http.client.withTransport.tls` instead.
+
+    - `c.t.f.netty3.Netty3TransporterTLSConfig` is removed.
+
+  * finagle: Some APIs around configuring TLS/SSL on Finagle servers have changed to
+    unblock Netty 4 adoption. ``RB_ID=891270``
+
+    - `c.t.f.Http.server.withTls(Netty3ListenerTLSConfig)` is removed. Use
+      variations of `c.t.f.Http.server.withTransport.tls` instead.
+
+    - `c.t.f.netty3.Netty3ListenerTLSConfig` is removed.
+
+  * finagle-core: Removed the protected and unused method `read(permit: Permit): Future[Rep]`
+    from `SerialClientDispatcher`. ``RB_ID=881978``
+
+  * finagle-core: Removed a gauge, `idle`, from `c.t.f.factory.ServiceFactoryCache`.
+    ``RB_ID=884210``
+
+  * finagle-core: `ServiceTimeoutException` now extends `NoStackTrace`. ``RB_ID=886809``
+
+  * finagle-core: Marked `com.twitter.finagle.util.ConcurrentRingBuffer` as
+    private.  It doesn't fit the typical programming model we encourage for
+    users of finagle, and so we found it was rarely used.  ``RB_ID=888801``
+
+  * finagle-core: Marked `transform` in `com.twitter.finagle.Stack` as protected. It is
+    too powerful and unnecessary for users, and should be used by implementors only.
+
+  * finagle-core: Removed the `StatsReceiver` argument from `TimeoutFilter`.  ``RB_ID=891380``
+
+  * finagle-core: Stopped exporting a few metrics related to deadlines, and replaced with a simpler
+    one.  There was a per-`TimeoutFilter` one named `timeout/expired_deadline_ms`, and a per-server
+    one named `admission_control/deadline/deadline_budget_ms`.  We added instead a per-server one
+    named `admission_control/deadline/exceeded_ms`. ``RB_ID=891380``
+
+  * finagle-http: HttpMuxer now takes in a Seq[Route] instead of a
+    Seq[(String, Service[Request, Response])]. ``RB_ID=886829``
+
+  * finagle-http: As part of the first step towards restructuring Finagle HTTP modules
+    required for Netty 4 adoption, HTTP params are moved from the inner object `c.t.f.Http.param`
+    into their own package `c.t.f.http.param`. ``RB_ID=885155``
+
+  * finagle-redis: A couple of methods had to be renamed (and return type changed) to
+    unblock Netty 4 adoption. ``RB_ID=882622``
+
+    - `Command.toChannelBuffer` renamed to `Command.toBuf` and return
+      type changed from N3 `ChannelBuffer` to Finagle `Buf`.
+
+    - `Command.toByteArray` is removed.
+
+    - Both `Command.key` and `Command.value` now implemented in terms of `Buf`s
+      (no `ChannelBuffer`s).
+
+  * finagle-redis: An API around `c.t.f.redis.protocol.Command` was modernized as part of
+    major restructuring required for the Netty 4 adoption. ``RB_ID=885811``
+
+    - `RedisMessage` (a common parent for both `Command` and `Reply`) has been removed.
+
+    - The encoding machinery was restructured to eliminate duplicated and dead code.
+
+  * finagle-thrift: Removed deprecated `ThriftRichClient.newServiceIface` methods
+    which did not take a label. Use the versions that take a String label.
+    ``RB_ID=891004``
+
+  * finagle-thrift: Removed deprecated `ThriftRichClient.newIface` methods based
+    on `Groups`. Use the versions that a `dest` or `Name`. ``RB_ID=891004``
+
+  * finagle-thriftmux: Removed deprecated classes `ThriftMuxClient`, `ThriftMuxClientLike`,
+    `ThriftMuxServer`, and `ThriftMuxServerLike`. ``RB_ID=880924``
+
+Bug Fixes
+~~~~~~~~~
+
+  * finagle-core: The `withTlsWithoutValidation` and `tlsWithoutValidation`
+    APIs have been fixed for an issue on Java 8 where certificate validation
+    was being attempted instead of bypassed. ``RB_ID=881660``
+
+  * finagle-http: The toggle implementation for `com.twitter.finagle.http.serverErrorsAsFailures`
+     had a bug when toggled on. That toggle is no longer used and is superseded by
+    `com.twitter.finagle.http.serverErrorsAsFailuresV2`. ``RB_ID=882151``
+
+  * finagle-netty4: Connecting to a Socks 5 proxy using Finagle with Netty 4
+    now works properly. This previously resulted in a timeout and
+    `ProxyConnectException`. ``RB_ID=884344``
+
+  * finagle-netty4: Don't swallow bind failures. ``RB_ID=892217``
+
+Deprecations
+~~~~~~~~~~~~
+
+* finagle-core: `c.t.f.builder.ClientBuilder` deprecate some seldom used methods.
+  The same functionality is available through the Stack-based APIs or
+  `ClientBuilder.configured`. ``RB_ID=881612``
+
+  - `hostConnectionIdleTime`
+  - `hostConnectionMaxIdleTime`
+  - `hostConnectionMaxLifeTime`
+  - `hostConnectionMaxWaiters`
+
+6.39.0
+------
+
+New Features
+~~~~~~~~~~~~
+
+  * finagle-core: `com.twitter.finagle.Failure` has a new flag, `NonRetryable`,
+    which signifies that a request should not be retried. The flag is respected by
+    all of Finagle's retry mechanisms. ``RB_ID=878766``
+
+  * finagle-thriftmux: Allow ThriftMux.Clients to be filtered. This is supported
+    in the the StdStackClient but ThriftMux.Client is a StackBasedClient. ``RB_ID=874560``
+
+  * finagle-netty4: Add boolean flag `com.twitter.finagle.netty4.poolReceiveBuffers` that
+    enables/disables pooling of receive buffers (disabled by default). When enabled, lowers
+    the CPU usage and allocation rate (GC pressure) with the cost of increased memory
+    footprint at the startup. ``RB_ID=872940``
+
+  * finagle-netty4: Add new histogram `receive_buffer_bytes` (only enabled with pooling)
+    to keep track of the receive buffer sizes (useful for tuning pooling). ``RB_ID=877080``
+
+Deprecations
+~~~~~~~~~~~~
+
+* finagle-core: `c.t.f.builder.ClientBuilder` deprecate some seldom used methods.
+  The same functionality is available through the Stack-based APIs or
+  `ClientBuilder.configured`. ``RB_ID=878009``
+
+  - `readerIdleTimeout`
+  - `writerIdleTimeout`
+  - `recvBufferSize`
+  - `sendBufferSize`
+  - `channelFactory`
+  - `expHostConnectionBufferSize`
+
+* finagle-kestrel: Deprecate `c.t.f.kestrel.protocol.Kestrel()`,
+  `c.t.f.kestrel.protocol.Kestrel(failFast)`, and `c.t.f.kestrel.protocol.Kestrel.get()`.
+  To create a Kestrel client using ClientBuilder, use `.stack(c.t.f.Kestrel.client)`.
+  ``RB_ID=870686``
+
+Breaking API Changes
+~~~~~~~~~~~~~~~~~~~~
+
+  * finagle-core: The constructors for both `c.t.f.netty3.Netty3Listener` and
+    `c.t.f.netty3.Netty3Transporter` now take `Stack.Params` instead of
+    individual parameters. ``RB_ID=871251``
+
+  * finagle-thrift: The c.t.f.thrift.legacy package has been removed which included
+    the public types `ThriftCall`, `ThriftReply`, and `ThriftCallFactory`.
+    ``RB_ID=873982``
+
+Runtime Behavior Changes
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+  * finagle-core: Tolerate TraceIds that are greater than 64 bits in preparation of
+    moving to 128 bit ids. ``RB_ID=874365``
+
+  * finagle-http: `c.t.f.http.service.HttpResponseClassifier.ServerErrorsAsFailures` now
+    classifies a retryable nack as a `ResponseClass.RetryableFailure`. ``RB_ID=869182``
+
+  * finagle-http: `c.t.f.Http.{Client,Server}` is moving towards treating HTTP
+    5xx status codes as failures via
+    `c.t.f.http.service.HttpResponseClassifier.ServerErrorsAsFailures`. This can
+    be disabled by setting the toggle "com.twitter.finagle.http.serverErrorsAsFailures"
+    to `0.0` or explicitly setting it using `withResponseClassifier`.
+    ``RB_ID=869303``, ``RB_ID=875367``
+
+  * finagle-http: `c.t.f.http.HttpServerDispatcher` now removes the bodies from responses
+    to HEAD requests in order to avoid a HTTP protocol error and logs the event at level
+    error. Associated with this, the `c.t.f.http.filter.HeadFilter` will now strip the body
+    from a chunked response, but in these cases the `Writer` associated with the response
+    will receive a `ReaderDiscarded` exception if a write is attempted after the filter has
+    run. ``RB_ID=872106``
+
+  * finagle-thrift: Also track response failures in the
+    `c.t.finagle.thrift.ThriftServiceIface#statsFilter` in addition to successful
+    responses that encode an Error or Exception. ``RB_ID=879075``
+
+Bug Fixes
+~~~~~~~~~
+
+  * finagle-http: Fix issue in `c.t.finagle.http.RequestBuilder` when the URI host contains
+    underscores. ``RB_ID=870978``
+
+  * finagle-http: A connection for HTTP/1.0 or non-keep-alive requests is now closed
+    gracefully so that all requests that have been issued received responses.
+    ``RB_ID=868767``
+
+  * finagle-http: The HTTP/1.x server dispatcher no longer clobbers 'Connection: close'
+    headers set by a service, resulting in the graceful shutdown of the connection.
+    ``RB_ID=880007``
+
+  * finagle-netty4: `ChannelTransport` now drains messages before reading more data off the
+    transport which should reduce memory pressure in streaming protocols. ``RB_ID=872639``
+
 6.38.0
 ------
 
@@ -21,6 +369,12 @@ New Features
 
 Breaking API Changes
 ~~~~~~~~~~~~~~~~~~~~
+
+  * finagle-kestrel: `c.t.f.kestrel.protocol.ResponseToEncoding` is now private[finagle].
+    ``RB_ID=866612``
+
+  * finagle-memcached: `c.t.f.memcached.protocol.text.{CommandToEncoding, ResponseToEncoding}`,
+    `c.t.f.memcached.protocol.text.client.{AbstractDecodingToResponse, ClientTransport, DecodingToResponse}` are now private[finagle]. ``RB_ID=866612``
 
   * finagle-netty4: Move `numWorkers` flag out of the package object so it gets a
     user friendly name: `c.t.f.netty4.numWorkers` instead of `c.t.f.netty4$.package$.numWorkers`.

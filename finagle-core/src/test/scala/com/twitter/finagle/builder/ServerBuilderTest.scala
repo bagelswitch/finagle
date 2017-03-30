@@ -1,14 +1,13 @@
 package com.twitter.finagle.builder
 
-import java.net.{InetSocketAddress, InetAddress}
-
 import com.twitter.finagle._
-import com.twitter.finagle.integration.{StringCodec, IntegrationBase}
+import com.twitter.finagle.integration.IntegrationBase
+import com.twitter.finagle.param.ProtocolLibrary
 import com.twitter.util._
-import com.twitter.util.registry.{Entry, GlobalRegistry, SimpleRegistry}
-import org.jboss.netty.channel.ChannelPipelineFactory
+import com.twitter.util.registry.{GlobalRegistry, SimpleRegistry}
+import java.net.{InetAddress, InetSocketAddress}
 import org.junit.runner.RunWith
-import org.mockito.Mockito.{verify, when}
+import org.mockito.Mockito.when
 import org.mockito.Matchers
 import org.mockito.Matchers._
 import org.scalatest.FunSuite
@@ -156,4 +155,13 @@ class ServerBuilderTest extends FunSuite
       .name("test")
       .build(svc)
   }
+
+  test("#configured[P](P)(Stack.Param[P]) should pass name through") {
+    val sb = ServerBuilder()
+    assert(!sb.params.contains[ProtocolLibrary])
+    val configured = sb.configured(ProtocolLibrary("foo"))
+    assert(configured.params.contains[ProtocolLibrary])
+    assert("foo" == configured.params[ProtocolLibrary].name)
+  }
+
 }

@@ -19,6 +19,7 @@ import scala.collection.JavaConverters.mapAsScalaMapConverter
 import scala.collection.immutable
 import scala.io.{Codec, Source}
 import scala.util.matching.Regex
+import scala.util.control.NonFatal
 
 /**
  * Blacklist of regex, comma-separated. Comma is a reserved character and
@@ -109,7 +110,7 @@ class JsonExporter(
         false
       } else {
         if (vals.exists(_ == "60")) true else {
-          log.warning(s"${getClass.getName} request ignored due to unsupported period: '${vals.mkString(",")}'")
+          log.warning(s"${getClass.getName} request (from ${request.userAgent.getOrElse("")} ${request.remoteSocketAddress}) ignored due to unsupported period: '${vals.mkString(",")}'")
           false
         }
       }

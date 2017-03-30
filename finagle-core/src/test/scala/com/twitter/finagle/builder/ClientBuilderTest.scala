@@ -16,7 +16,7 @@ import org.mockito.Mockito.{verify, when}
 import org.scalatest.FunSuite
 import org.scalatest.concurrent.{Eventually, IntegrationPatience}
 import org.scalatest.junit.JUnitRunner
-import org.scalatest.mock.MockitoSugar
+import org.scalatest.mockito.MockitoSugar
 
 @RunWith(classOf[JUnitRunner])
 class ClientBuilderTest extends FunSuite
@@ -328,4 +328,13 @@ class ClientBuilderTest extends FunSuite
       assert(999 == localOnRetry.get)
     }
   }
+
+  test("configured") {
+    val cb = ClientBuilder()
+    assert(!cb.params.contains[ProtocolLibrary])
+    val configured = cb.configured(ProtocolLibrary("derp"))
+    assert(configured.params.contains[ProtocolLibrary])
+    assert("derp" == configured.params[ProtocolLibrary].name)
+  }
+
 }

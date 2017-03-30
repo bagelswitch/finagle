@@ -6,7 +6,6 @@ import com.twitter.finagle.client.{StackClient, StdStackClient, Transporter}
 import com.twitter.finagle.dispatch.SerialClientDispatcher
 import com.twitter.finagle.netty3.Netty3Transporter
 import com.twitter.finagle.netty3.transport.ChannelTransport
-import com.twitter.finagle.param.Stats
 import com.twitter.finagle.stats.{InMemoryStatsReceiver, StatsReceiver}
 import com.twitter.finagle.tracing.TraceInitializerFilter
 import com.twitter.finagle.transport.Transport
@@ -98,7 +97,7 @@ trait IntegrationBase extends FunSuite with MockitoSugar {
     val clientBuilder = ClientBuilder()
       .name(name)
       .codec(codecFactory)
-      .channelFactory(channelFactory)
+      .configured(Netty3Transporter.ChannelFactory(channelFactory))
       .daemon(true) // don't create an exit guard
       .hosts(Seq(clientAddress))
       .reportTo(statsReceiver)

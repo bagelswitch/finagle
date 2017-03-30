@@ -1,4 +1,4 @@
-scala_library(name='scala',
+scala_library(
   provides = scala_artifact(
     org = 'com.twitter',
     name = 'finagle-http',
@@ -9,15 +9,21 @@ scala_library(name='scala',
     '3rdparty/jvm/com/google/guava',
     '3rdparty/jvm/commons-lang',
     '3rdparty/jvm/io/netty',
-    scoped('util/util-app/src/main/scala', scope='forced'),
+    'finagle/finagle-core',
+    'finagle/finagle-netty4',
+    'finagle/finagle-base-http',
+    'finagle/finagle-netty4-http',
+    'finagle/finagle-toggle',
+    scoped('util/util-app', scope='forced'),
     'util/util-codec',
     'util/util-collection',
+    'util/util-core',
     'util/util-logging',
     'util/util-stats',
-    'finagle/finagle-core/src/main/scala:scala',
-    'util/util-core/src/main/scala:scala',
   ],
-  strict_deps=True,
+  resources=[
+    'finagle/finagle-http/src/main/resources'
+  ],
   fatal_warnings=True,
   sources=rglobs('*.scala'),
 )

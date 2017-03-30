@@ -3,8 +3,8 @@ package com.twitter.finagle.tracing
 import com.twitter.finagle.util.ByteArrays
 import com.twitter.util.RichU64String
 import com.twitter.util.{Try, Return, Throw}
-import com.twitter.util.NonFatal
 import java.lang.{Boolean => JBool}
+import scala.util.control.NonFatal
 
 /**
  * Defines trace identifiers.  Span IDs name a particular (unique)
@@ -49,7 +49,11 @@ object SpanId {
 
   def fromString(spanId: String): Option[SpanId] =
     try {
-      Some(SpanId(new RichU64String(spanId).toU64Long))
+      // Tolerates 128 bit X-B3-TraceId by reading the right-most 16 hex
+      // characters (as opposed to overflowing a U64 and starting a new trace).
+      val length = spanId.length()
+      val lower64Bits = if (length <= 16) spanId else spanId.substring(length - 16)
+      Some(SpanId(new RichU64String(lower64Bits).toU64Long))
     } catch {
       case NonFatal(_) => None
     }
